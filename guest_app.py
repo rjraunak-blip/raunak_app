@@ -4,43 +4,43 @@ import pandas as pd
 import qrcode
 from io import BytesIO
 from datetime import datetime
-import os
 
-# ---------------- DATABASE SETUP ---------------- #
+# ---------------- DATABASE ---------------- #
 
 conn = sqlite3.connect("crm.db", check_same_thread=False)
 cursor = conn.cursor()
 
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS users (
-    username TEXT PRIMARY KEY,
-    password TEXT,
-    role TEXT
+username TEXT PRIMARY KEY,
+password TEXT,
+role TEXT
 )
 """)
 
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS visits (
-    visit_id TEXT PRIMARY KEY,
-    date TEXT,
-    guest_name TEXT,
-    mobile TEXT,
-    staff TEXT
+visit_id TEXT PRIMARY KEY,
+date TEXT,
+guest_name TEXT,
+mobile TEXT,
+guest_count INTEGER,
+category TEXT,
+staff TEXT,
+edit_count INTEGER DEFAULT 0
 )
 """)
 
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS reviews (
-    visit_id TEXT,
-    food_rating INTEGER,
-    behaviour_rating INTEGER,
-    comment TEXT
+visit_id TEXT,
+food_rating INTEGER,
+behaviour_rating INTEGER
 )
 """)
 
 conn.commit()
 
-# Default users
 cursor.execute("INSERT OR IGNORE INTO users VALUES ('admin','1234','admin')")
 cursor.execute("INSERT OR IGNORE INTO users VALUES ('staff1','1111','staff')")
 conn.commit()
@@ -54,14 +54,12 @@ if "logged_in" not in st.session_state:
 
 def login():
     st.title("Restaurant CRM Login")
-
     u = st.text_input("Username")
     p = st.text_input("Password", type="password")
 
     if st.button("Login"):
         cursor.execute("SELECT role FROM users WHERE username=? AND password=?", (u,p))
         result = cursor.fetchone()
-
         if result:
             st.session_state.logged_in = True
             st.session_state.role = result[0]
@@ -70,7 +68,7 @@ def login():
         else:
             st.error("Invalid Login")
 
-# ---------------- QR GENERATOR ---------------- #
+# ---------------- QR ---------------- #
 
 def generate_qr(data):
     qr = qrcode.make(data)
@@ -79,9 +77,12 @@ def generate_qr(data):
     buf.seek(0)
     return buf
 
-# ---------------- MAIN APP ---------------- #
+# ---------------- MAIN ---------------- #
 
 def main_app():
+
+    role = st.session_state.role
+    user = st.session_state.user
 
     st.title("Professional Restaurant CRM")
 
@@ -89,100 +90,128 @@ def main_app():
         st.session_state.logged_in = False
         st.rerun()
 
-    role = st.session_state.role
-    user = st.session_state.user
+    menu = ["Add Guest","Edit Guest","Review","Export Excel"]
 
-    menu = ["Add Visit","Review","Dashboard","Customer Search"]
+    if role == "admin":
+        menu += ["Admin Dashboard"]
+
     choice = st.sidebar.selectbox("Menu", menu)
 
-    # -------- ADD VISIT -------- #
+    # -------- ADD GUEST -------- #
 
-    if choice == "Add Visit":
-        st.header("Add Guest Visit")
+    if choice == "Add Guest":
 
         name = st.text_input("Guest Name")
-        mobile = st.text_input("Mobile")
+        mobile = st.text_input("Guest Mobile")
+        guest_count = st.number_input("Number of Guest", min_value=1)
+        category = st.selectbox("Category",
+        ["Swiggy","Zomato","EazyDiner","Party","Walk-In"])
 
-        if st.button("Create Visit"):
+        if st.button("Create Entry"):
 
             visit_id = f"VST{datetime.now().strftime('%Y%m%d%H%M%S')}"
 
-            cursor.execute("INSERT INTO visits VALUES (?,?,?,?,?)",
-                           (visit_id, datetime.now().strftime("%Y-%m-%d"),
-                            name, mobile, user))
+            cursor.execute("""
+            INSERT INTO visits
+            VALUES (?,?,?,?,?,?,?,0)
+            """,(visit_id,
+                 datetime.now().strftime("%Y-%m-%d"),
+                 name,
+                 mobile,
+                 guest_count,
+                 category,
+                 user))
             conn.commit()
 
-            review_link = f"?review={visit_id}"
-
-            st.success("Visit Created")
+            st.success("Guest Entry Created")
             st.write("Visit ID:", visit_id)
 
-            qr_img = generate_qr(review_link)
-            st.image(qr_img, caption="Scan for Review")
+            qr = generate_qr(visit_id)
+            st.image(qr, caption="Scan For Review")
 
-    # -------- REVIEW PAGE -------- #
+    # -------- EDIT GUEST -------- #
+
+    if choice == "Edit Guest":
+
+        vid = st.text_input("Enter Visit ID")
+
+        if vid:
+            df = pd.read_sql_query("SELECT * FROM visits WHERE visit_id=?", conn, params=(vid,))
+            if not df.empty:
+
+                edit_count = df.iloc[0]["edit_count"]
+
+                if role == "staff" and edit_count >= 1:
+                    admin_pass = st.text_input("Admin Password Required", type="password")
+                    if admin_pass != "1234":
+                        st.warning("Admin Approval Needed")
+                        return
+
+                name = st.text_input("Guest Name", df.iloc[0]["guest_name"])
+                mobile = st.text_input("Mobile", df.iloc[0]["mobile"])
+                guest_count = st.number_input("Guest Count", value=int(df.iloc[0]["guest_count"]))
+                category = st.selectbox("Category",
+                ["Swiggy","Zomato","EazyDiner","Party","Walk-In"],
+                index=["Swiggy","Zomato","EazyDiner","Party","Walk-In"].index(df.iloc[0]["category"]))
+
+                if st.button("Update Entry"):
+                    cursor.execute("""
+                    UPDATE visits
+                    SET guest_name=?, mobile=?, guest_count=?, category=?, edit_count=edit_count+1
+                    WHERE visit_id=?
+                    """,(name,mobile,guest_count,category,vid))
+                    conn.commit()
+                    st.success("Updated Successfully")
+
+    # -------- REVIEW -------- #
 
     if choice == "Review":
 
-        review_id = st.text_input("Enter Visit ID")
+        vid = st.text_input("Enter Visit ID for Review")
 
-        if review_id:
-            st.header("Submit Review")
-
+        if vid:
             food = st.slider("Food Rating",1,5)
             behaviour = st.slider("Staff Behaviour",1,5)
-            comment = st.text_area("Comment")
 
             if st.button("Submit Review"):
-                cursor.execute("INSERT INTO reviews VALUES (?,?,?,?)",
-                               (review_id, food, behaviour, comment))
+                cursor.execute("INSERT INTO reviews VALUES (?,?,?)",(vid,food,behaviour))
                 conn.commit()
                 st.success("Review Submitted")
 
-    # -------- DASHBOARD (ADMIN ONLY) -------- #
+    # -------- EXPORT -------- #
 
-    if choice == "Dashboard" and role == "admin":
+    if choice == "Export Excel":
+        df = pd.read_sql_query("SELECT * FROM visits", conn)
+        st.dataframe(df)
+        st.download_button("Download Excel",
+                           df.to_csv(index=False),
+                           "guest_data.csv")
+
+    # -------- ADMIN DASHBOARD -------- #
+
+    if choice == "Admin Dashboard" and role == "admin":
 
         st.header("Admin Dashboard")
 
-        df_visits = pd.read_sql_query("SELECT * FROM visits", conn)
-        df_reviews = pd.read_sql_query("SELECT * FROM reviews", conn)
+        visits = pd.read_sql_query("SELECT * FROM visits", conn)
+        reviews = pd.read_sql_query("SELECT * FROM reviews", conn)
 
-        if not df_reviews.empty:
-            merged = pd.merge(df_visits, df_reviews, on="visit_id")
+        if not reviews.empty:
+            merged = pd.merge(visits, reviews, on="visit_id")
 
-            st.subheader("Staff Performance")
+            st.subheader("Staff Behaviour %")
+            perf = merged.groupby("staff")["behaviour_rating"].mean()
+            perf = (perf/5*100).round(2)
+            st.dataframe(perf)
 
-            staff_perf = merged.groupby("staff")["behaviour_rating"].mean()
-            staff_perf = (staff_perf / 5 * 100).round(2)
-
-            st.dataframe(staff_perf)
-
-            st.subheader("Low Ratings (<3)")
+            st.subheader("Low Rating Alert (<3)")
             low = merged[merged["behaviour_rating"] < 3]
             st.dataframe(low)
 
-        else:
-            st.info("No Reviews Yet")
-
-    # -------- CUSTOMER SEARCH -------- #
-
-    if choice == "Customer Search":
-        st.header("Customer History")
-
-        mobile_search = st.text_input("Enter Mobile Number")
-
-        if mobile_search:
-            df = pd.read_sql_query(
-                "SELECT * FROM visits WHERE mobile=?",
-                conn,
-                params=(mobile_search,)
-            )
-
-            st.dataframe(df)
-
-            if len(df) >= 3:
-                st.success("VIP Customer")
+        st.subheader("VIP Customers (3+ visits)")
+        vip = visits["mobile"].value_counts()
+        vip = vip[vip >= 3]
+        st.dataframe(vip)
 
 # ---------------- FLOW ---------------- #
 
