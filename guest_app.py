@@ -1,135 +1,190 @@
 import streamlit as st
+import sqlite3
 import pandas as pd
+import qrcode
+from io import BytesIO
+from datetime import datetime
 import os
-from datetime import datetime, date
 
-# ------------------ LOGIN CONFIG ------------------ #
+# ---------------- DATABASE SETUP ---------------- #
 
-USER_CREDENTIALS = {
-    "admin": "1234",
-    "ranak": "guest123"
-}
+conn = sqlite3.connect("crm.db", check_same_thread=False)
+cursor = conn.cursor()
 
-# ------------------ SESSION ------------------ #
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS users (
+    username TEXT PRIMARY KEY,
+    password TEXT,
+    role TEXT
+)
+""")
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS visits (
+    visit_id TEXT PRIMARY KEY,
+    date TEXT,
+    guest_name TEXT,
+    mobile TEXT,
+    staff TEXT
+)
+""")
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS reviews (
+    visit_id TEXT,
+    food_rating INTEGER,
+    behaviour_rating INTEGER,
+    comment TEXT
+)
+""")
+
+conn.commit()
+
+# Default users
+cursor.execute("INSERT OR IGNORE INTO users VALUES ('admin','1234','admin')")
+cursor.execute("INSERT OR IGNORE INTO users VALUES ('staff1','1111','staff')")
+conn.commit()
+
+# ---------------- LOGIN ---------------- #
 
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
-
-# ------------------ LOGIN PAGE ------------------ #
+    st.session_state.role = ""
+    st.session_state.user = ""
 
 def login():
-    st.title("Login - Guest Entry System")
+    st.title("Restaurant CRM Login")
 
-    username = st.text_input("Username")
-    password = st.text_input("Password", type="password")
+    u = st.text_input("Username")
+    p = st.text_input("Password", type="password")
 
     if st.button("Login"):
-        if username in USER_CREDENTIALS and USER_CREDENTIALS[username] == password:
+        cursor.execute("SELECT role FROM users WHERE username=? AND password=?", (u,p))
+        result = cursor.fetchone()
+
+        if result:
             st.session_state.logged_in = True
-            st.success("Login Successful")
+            st.session_state.role = result[0]
+            st.session_state.user = u
             st.rerun()
         else:
-            st.error("Invalid Username or Password")
+            st.error("Invalid Login")
 
-# ------------------ MAIN APP ------------------ #
+# ---------------- QR GENERATOR ---------------- #
+
+def generate_qr(data):
+    qr = qrcode.make(data)
+    buf = BytesIO()
+    qr.save(buf)
+    buf.seek(0)
+    return buf
+
+# ---------------- MAIN APP ---------------- #
 
 def main_app():
 
-    col1, col2 = st.columns([4,1])
+    st.title("Professional Restaurant CRM")
 
-    with col1:
-        st.title("Guest Entry System")
+    if st.button("Logout"):
+        st.session_state.logged_in = False
+        st.rerun()
 
-    with col2:
-        if st.button("Logout"):
-            st.session_state.logged_in = False
-            st.rerun()
+    role = st.session_state.role
+    user = st.session_state.user
 
-    file_name = "guest_data.xlsx"
+    menu = ["Add Visit","Review","Dashboard","Customer Search"]
+    choice = st.sidebar.selectbox("Menu", menu)
 
-    # Create file if not exist
-    if not os.path.exists(file_name):
-        df = pd.DataFrame(columns=[
-            "Date",
-            "Guest Name",
-            "Mobile",
-            "Category",
-            "Guest Count",
-            "Repeat Customer"
-        ])
-        df.to_excel(file_name, index=False)
+    # -------- ADD VISIT -------- #
 
-    df = pd.read_excel(file_name)
+    if choice == "Add Visit":
+        st.header("Add Guest Visit")
 
-    # ------------------ ADD GUEST ------------------ #
+        name = st.text_input("Guest Name")
+        mobile = st.text_input("Mobile")
 
-    st.header("Add Guest")
+        if st.button("Create Visit"):
 
-    entry_date = st.date_input("Select Date", date.today())
-    name = st.text_input("Guest Name")
-    mobile = st.text_input("Mobile Number")
+            visit_id = f"VST{datetime.now().strftime('%Y%m%d%H%M%S')}"
 
-    category = st.selectbox("Category", [
-        "Swiggy",
-        "Zomato",
-        "Walkin",
-        "EazyDiner",
-        "Party"
-    ])
+            cursor.execute("INSERT INTO visits VALUES (?,?,?,?,?)",
+                           (visit_id, datetime.now().strftime("%Y-%m-%d"),
+                            name, mobile, user))
+            conn.commit()
 
-    guest_count = st.number_input("Number of Guest", min_value=1, step=1)
+            review_link = f"?review={visit_id}"
 
-    repeat = st.selectbox("Repeat Customer", ["No", "Yes"])
+            st.success("Visit Created")
+            st.write("Visit ID:", visit_id)
 
-    if st.button("Add Guest"):
-        if name == "" or mobile == "":
-            st.warning("Please fill all details")
+            qr_img = generate_qr(review_link)
+            st.image(qr_img, caption="Scan for Review")
+
+    # -------- REVIEW PAGE -------- #
+
+    if choice == "Review":
+
+        review_id = st.text_input("Enter Visit ID")
+
+        if review_id:
+            st.header("Submit Review")
+
+            food = st.slider("Food Rating",1,5)
+            behaviour = st.slider("Staff Behaviour",1,5)
+            comment = st.text_area("Comment")
+
+            if st.button("Submit Review"):
+                cursor.execute("INSERT INTO reviews VALUES (?,?,?,?)",
+                               (review_id, food, behaviour, comment))
+                conn.commit()
+                st.success("Review Submitted")
+
+    # -------- DASHBOARD (ADMIN ONLY) -------- #
+
+    if choice == "Dashboard" and role == "admin":
+
+        st.header("Admin Dashboard")
+
+        df_visits = pd.read_sql_query("SELECT * FROM visits", conn)
+        df_reviews = pd.read_sql_query("SELECT * FROM reviews", conn)
+
+        if not df_reviews.empty:
+            merged = pd.merge(df_visits, df_reviews, on="visit_id")
+
+            st.subheader("Staff Performance")
+
+            staff_perf = merged.groupby("staff")["behaviour_rating"].mean()
+            staff_perf = (staff_perf / 5 * 100).round(2)
+
+            st.dataframe(staff_perf)
+
+            st.subheader("Low Ratings (<3)")
+            low = merged[merged["behaviour_rating"] < 3]
+            st.dataframe(low)
+
         else:
-            new_row = pd.DataFrame([{
-                "Date": entry_date,
-                "Guest Name": name,
-                "Mobile": mobile,
-                "Category": category,
-                "Guest Count": guest_count,
-                "Repeat Customer": repeat
-            }])
+            st.info("No Reviews Yet")
 
-            df = pd.concat([df, new_row], ignore_index=True)
-            df.to_excel(file_name, index=False)
-            st.success("Guest Added Successfully")
+    # -------- CUSTOMER SEARCH -------- #
 
-    # ------------------ VIEW DATA ------------------ #
+    if choice == "Customer Search":
+        st.header("Customer History")
 
-    st.header("View Date Wise Data")
+        mobile_search = st.text_input("Enter Mobile Number")
 
-    if not df.empty:
-        df["Date"] = pd.to_datetime(df["Date"]).dt.date
-        selected_date = st.date_input("Select Date to View", date.today())
-        filtered_df = df[df["Date"] == selected_date]
-        st.dataframe(filtered_df)
+        if mobile_search:
+            df = pd.read_sql_query(
+                "SELECT * FROM visits WHERE mobile=?",
+                conn,
+                params=(mobile_search,)
+            )
 
-        # ------------------ REPORT ------------------ #
+            st.dataframe(df)
 
-        st.header("Report (Selected Date)")
+            if len(df) >= 3:
+                st.success("VIP Customer")
 
-        total_guest = filtered_df["Guest Count"].sum()
-        swiggy = filtered_df[filtered_df["Category"] == "Swiggy"]["Guest Count"].sum()
-        zomato = filtered_df[filtered_df["Category"] == "Zomato"]["Guest Count"].sum()
-        repeat_count = filtered_df[filtered_df["Repeat Customer"] == "Yes"]["Guest Count"].sum()
-
-        st.write("Total Guest =", total_guest)
-        st.write("Swiggy Guest =", swiggy)
-        st.write("Zomato Guest =", zomato)
-        st.write("Repeat Customer Guest =", repeat_count)
-
-    # ------------------ DOWNLOAD ------------------ #
-
-    st.header("Download Data")
-
-    with open(file_name, "rb") as file:
-        st.download_button("Download Excel", file, "guest_data.xlsx")
-
-# ------------------ APP FLOW ------------------ #
+# ---------------- FLOW ---------------- #
 
 if st.session_state.logged_in:
     main_app()
