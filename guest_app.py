@@ -214,4 +214,3 @@ else:
             staff_panel()
         else:
             admin_panel()
-
