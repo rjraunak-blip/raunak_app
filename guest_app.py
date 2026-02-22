@@ -8,22 +8,19 @@ import io
 st.set_page_config(page_title="Enterprise CRM", layout="wide")
 
 DATA_FILE = "guest_data.csv"
+FEEDBACK_FILE = "feedback_data.csv"
 
-# ---------- LOGIN SYSTEM ----------
+# ================= LOGIN =================
 users = {
     "admin": {"password": "admin123", "role": "admin"},
     "staff1": {"password": "staff123", "role": "staff"},
 }
-
-def hash_password(password):
-    return hashlib.sha256(password.encode()).hexdigest()
 
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
 
 if not st.session_state.logged_in:
     st.title("🔐 Secure Login")
-
     username = st.text_input("Username")
     password = st.text_input("Password", type="password")
 
@@ -34,23 +31,30 @@ if not st.session_state.logged_in:
             st.session_state.role = users[username]["role"]
             st.rerun()
         else:
-            st.error("Invalid credentials")
+            st.error("Invalid Login")
 
     st.stop()
 
-# ---------- LOAD DATA ----------
+# ================= LOAD DATA =================
 if os.path.exists(DATA_FILE):
     df = pd.read_csv(DATA_FILE)
 else:
     df = pd.DataFrame(columns=[
-        "id", "name", "mobile", "category",
-        "date", "created_by", "edit_count"
+        "id","name","mobile","category","pax",
+        "date","created_by","edit_count"
     ])
 
-# ---------- SIDEBAR ----------
+if os.path.exists(FEEDBACK_FILE):
+    feedback_df = pd.read_csv(FEEDBACK_FILE)
+else:
+    feedback_df = pd.DataFrame(columns=[
+        "guest_mobile","rating","comment","date"
+    ])
+
+# ================= SIDEBAR =================
 st.sidebar.title("CRM Panel")
 menu = st.sidebar.radio("Navigation",
-    ["Guest Entry", "Dashboard", "Admin Panel"]
+    ["Guest Entry","Dashboard","Admin Panel"]
 )
 
 st.sidebar.write(f"Logged in as: {st.session_state.username}")
@@ -60,7 +64,7 @@ if st.sidebar.button("Logout"):
     st.rerun()
 
 # ==========================================================
-# ===================== GUEST ENTRY ========================
+# ================= GUEST ENTRY ============================
 # ==========================================================
 if menu == "Guest Entry":
 
@@ -68,105 +72,127 @@ if menu == "Guest Entry":
 
     name = st.text_input("Guest Name")
     mobile = st.text_input("Mobile Number")
-    category = st.selectbox("Category",
-        ["Regular", "VIP", "Corporate", "Other"]
-    )
+
+    category = st.selectbox("Category",[
+        "Walk-In","Swiggy","Zomato","EasyDiner","Party"
+    ])
+
+    pax = st.number_input("Number of PAX", min_value=1, step=1)
+
     date = st.date_input("Visit Date", datetime.date.today())
 
     if st.button("Submit Entry"):
-        if name and mobile:
-            new_data = {
-                "id": hashlib.md5(
-                    (name + mobile + str(datetime.datetime.now())).encode()
-                ).hexdigest()[:8],
-                "name": name,
-                "mobile": mobile,
-                "category": category,
-                "date": date,
-                "created_by": st.session_state.username,
-                "edit_count": 0
-            }
+        new_id = hashlib.md5(
+            (name + mobile + str(datetime.datetime.now())).encode()
+        ).hexdigest()[:8]
 
-            df = pd.concat([df, pd.DataFrame([new_data])])
-            df.to_csv(DATA_FILE, index=False)
-            st.success("Guest Added Successfully")
+        new_data = {
+            "id": new_id,
+            "name": name,
+            "mobile": mobile,
+            "category": category,
+            "pax": pax,
+            "date": date,
+            "created_by": st.session_state.username,
+            "edit_count": 0
+        }
 
-            # WhatsApp Link
-            feedback_link = f"https://rjraunakapp.streamlit.app/?feedback={mobile}"
-            whatsapp_url = f"https://wa.me/{mobile}?text=Please%20give%20your%20feedback:%20{feedback_link}"
-            st.markdown(f"[📲 Send Feedback WhatsApp]({whatsapp_url})")
+        df = pd.concat([df, pd.DataFrame([new_data])])
+        df.to_csv(DATA_FILE,index=False)
 
+        st.success("Guest Added")
+
+        feedback_link = f"https://rjraunakapp.streamlit.app/?feedback={mobile}"
+        whatsapp_url = f"https://wa.me/{mobile}?text=Please%20give%20feedback:%20{feedback_link}"
+        st.markdown(f"[📲 Send Feedback on WhatsApp]({whatsapp_url})")
+
+    # ================= STAFF EDIT (ONLY ONCE) =================
+    st.subheader("Edit Guest (Only Once)")
+
+    edit_id = st.text_input("Enter Guest ID to Edit")
+
+    if edit_id in df["id"].values:
+        row = df.index[df["id"]==edit_id][0]
+
+        if df.at[row,"edit_count"] >= 1:
+            st.error("Edit limit reached (Only 1 time allowed)")
         else:
-            st.error("Fill all fields")
+            new_name = st.text_input("New Name", df.at[row,"name"])
+            new_mobile = st.text_input("New Mobile", df.at[row,"mobile"])
+
+            if st.button("Update Guest"):
+                df.at[row,"name"] = new_name
+                df.at[row,"mobile"] = new_mobile
+                df.at[row,"edit_count"] += 1
+                df.to_csv(DATA_FILE,index=False)
+                st.success("Updated Successfully")
+
+    # ================= STAFF EXCEL EXPORT =================
+    st.subheader("Download Your Entries")
+
+    staff_data = df[df["created_by"]==st.session_state.username]
+
+    buffer = io.BytesIO()
+    staff_data.to_excel(buffer,index=False)
+    buffer.seek(0)
+
+    st.download_button(
+        "Download My Excel",
+        data=buffer,
+        file_name="staff_data.xlsx",
+        mime="application/vnd.ms-excel"
+    )
 
 # ==========================================================
-# ===================== DASHBOARD ==========================
+# ================= DASHBOARD ==============================
 # ==========================================================
 elif menu == "Dashboard":
 
     st.title("📊 Dashboard")
 
     today = str(datetime.date.today())
-    today_data = df[df["date"] == today]
+    today_df = df[df["date"]==today]
 
-    col1, col2 = st.columns(2)
+    col1,col2,col3 = st.columns(3)
     col1.metric("Total Guests", len(df))
-    col2.metric("Today Guests", len(today_data))
+    col2.metric("Today Guests", len(today_df))
+    col3.metric("Total PAX", df["pax"].sum())
 
-    category_filter = st.selectbox(
-        "Filter by Category",
-        ["All"] + list(df["category"].unique())
+    filter_cat = st.selectbox("Filter Category",
+        ["All"]+list(df["category"].unique())
     )
 
-    if category_filter != "All":
-        filtered = df[df["category"] == category_filter]
+    if filter_cat!="All":
+        show_df = df[df["category"]==filter_cat]
     else:
-        filtered = df
+        show_df = df
 
-    st.dataframe(filtered)
+    st.dataframe(show_df)
 
 # ==========================================================
-# ===================== ADMIN PANEL ========================
+# ================= ADMIN PANEL ============================
 # ==========================================================
 elif menu == "Admin Panel":
 
-    if st.session_state.role != "admin":
-        st.error("Access Denied")
+    if st.session_state.role!="admin":
+        st.error("Admin Only Access")
         st.stop()
 
     st.title("🛠 Admin Panel")
 
+    st.subheader("All Guest Data")
     st.dataframe(df)
 
-    # Excel Export
     buffer = io.BytesIO()
-    df.to_excel(buffer, index=False)
+    df.to_excel(buffer,index=False)
     buffer.seek(0)
 
     st.download_button(
-        label="📥 Download Full Excel",
+        "Download Full Excel",
         data=buffer,
         file_name="all_guest_data.xlsx",
         mime="application/vnd.ms-excel"
     )
 
-    # Edit System
-    st.subheader("Edit Guest (Admin Only)")
-
-    edit_id = st.text_input("Enter Guest ID to Edit")
-
-    if edit_id in df["id"].values:
-        row_index = df.index[df["id"] == edit_id][0]
-
-        new_name = st.text_input("New Name", df.at[row_index, "name"])
-        new_mobile = st.text_input("New Mobile", df.at[row_index, "mobile"])
-        new_date = st.date_input("New Date",
-            pd.to_datetime(df.at[row_index, "date"])
-        )
-
-        if st.button("Update"):
-            df.at[row_index, "name"] = new_name
-            df.at[row_index, "mobile"] = new_mobile
-            df.at[row_index, "date"] = new_date
-            df.to_csv(DATA_FILE, index=False)
-            st.success("Updated Successfully")
+    st.subheader("Feedback Data")
+    st.dataframe(feedback_df)
