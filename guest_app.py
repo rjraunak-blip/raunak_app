@@ -4,12 +4,6 @@ import hashlib
 import datetime
 import pandas as pd
 import qrcode
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table
-from reportlab.lib.styles import ParagraphStyle
-from reportlab.lib import colors
-from reportlab.lib.styles import getSampleStyleSheet
-from reportlab.lib.units import inch
-from reportlab.platypus import TableStyle
 import os
 
 st.set_page_config(page_title="CARNIVLE Enterprise Pro", layout="wide")
@@ -29,14 +23,11 @@ can_view_all INTEGER,
 can_download INTEGER
 )""")
 
-c.execute("""CREATE TABLE IF NOT EXISTS branches(
-branch_name TEXT PRIMARY KEY
-)""")
-
 c.execute("""CREATE TABLE IF NOT EXISTS guests(
 id TEXT PRIMARY KEY,
 name TEXT,
 mobile TEXT,
+category TEXT,
 branch TEXT,
 created_by TEXT,
 pax INTEGER,
@@ -47,9 +38,6 @@ c.execute("""CREATE TABLE IF NOT EXISTS feedback(
 mobile TEXT,
 branch TEXT,
 overall INTEGER,
-staff INTEGER,
-food INTEGER,
-service INTEGER,
 comment TEXT,
 date TEXT
 )""")
@@ -67,30 +55,15 @@ def generate_id(name,mobile):
 c.execute("SELECT * FROM users WHERE username='admin'")
 if not c.fetchone():
     c.execute("INSERT INTO users VALUES (?,?,?,?,?,?,?)",
-              ("admin",hash_pass("admin123"),"admin",
-               "Head Office",1,1,1))
+              ("admin",hash_pass("admin123"),
+               "admin","Head Office",1,1,1))
     conn.commit()
-
-# ================= THEME =================
-if "dark" not in st.session_state:
-    st.session_state.dark=False
-
-if st.sidebar.button("🌗 Toggle Dark Mode"):
-    st.session_state.dark=not st.session_state.dark
-
-if st.session_state.dark:
-    st.markdown("""
-        <style>
-        body {background-color:#111;color:white;}
-        </style>
-    """,unsafe_allow_html=True)
 
 # ================= LOGIN =================
 if "login" not in st.session_state:
     st.session_state.login=False
 
 if not st.session_state.login:
-
     st.title("🍽 CARNIVLE Enterprise Pro")
     u=st.text_input("Username")
     p=st.text_input("Password",type="password")
@@ -131,36 +104,52 @@ if menu=="Dashboard":
         "SELECT * FROM feedback WHERE branch=?",
         conn,params=(user[3],))
 
-    col1,col2,col3=st.columns(3)
+    col1,col2,col3,col4=st.columns(4)
 
     col1.metric("Total Guests",len(df))
     col2.metric("Total PAX",
                 df["pax"].sum() if not df.empty else 0)
-    col3.metric("Avg Rating",
+    col3.metric("VIP Guests",
+                len(df[df["category"]=="VIP Guest"]) if not df.empty else 0)
+    col4.metric("Avg Rating",
                 round(fb["overall"].mean(),2)
                 if not fb.empty else 0)
 
-    # Complaint Alert
-    low=fb[fb["overall"]<=2]
-    if not low.empty:
-        st.error("⚠️ Low Rating Alert!")
+    # Low rating alert
+    if not fb.empty:
+        low=fb[fb["overall"]<=2]
+        if not low.empty:
+            st.error("⚠️ Low Rating Alert Detected!")
 
 # ================= GUEST ENTRY =================
 if menu=="Guest Entry" and user[4]==1:
 
     st.subheader("Add Guest")
 
-    name=st.text_input("Name")
-    mobile=st.text_input("Mobile")
-    pax=st.number_input("PAX",1)
+    with st.form("guest_form",clear_on_submit=True):
 
-    if st.button("Add"):
-        gid=generate_id(name,mobile)
-        c.execute("INSERT INTO guests VALUES (?,?,?,?,?,?,?)",
-                  (gid,name,mobile,user[3],
-                   user[0],pax,str(datetime.date.today())))
-        conn.commit()
-        st.success("Guest Added")
+        col1,col2=st.columns(2)
+
+        with col1:
+            name=st.text_input("Guest Name")
+            mobile=st.text_input("Mobile")
+
+        with col2:
+            pax=st.number_input("PAX",1)
+            category=st.selectbox("Category",
+                ["Walk-In","Swiggy","Zomato",
+                 "EazyDiner","Party","VIP Guest"])
+
+        submit=st.form_submit_button("Add Guest")
+
+        if submit:
+            gid=generate_id(name,mobile)
+            c.execute("INSERT INTO guests VALUES (?,?,?,?,?,?,?,?)",
+                      (gid,name,mobile,category,
+                       user[3],user[0],pax,
+                       str(datetime.date.today())))
+            conn.commit()
+            st.success("Guest Added Successfully")
 
 # ================= LEADERBOARD =================
 if menu=="Leaderboard":
@@ -179,82 +168,43 @@ if menu=="QR Generator":
 
     if st.button("Generate QR"):
 
-        url=f"https://yourapp.streamlit.app/?feedback=table{table}&branch={user[3]}"
+        url=f"https://rjraunakapp.streamlit.app/?feedback=table{table}&branch={user[3]}"
 
         img=qrcode.make(url)
         img.save("qr.png")
         st.image("qr.png")
 
-# ================= PDF REPORT =================
-if menu=="Reports":
+# ================= REPORT =================
+if menu=="Reports" and user[6]==1:
 
-    if st.button("Generate Monthly Report"):
+    df=pd.read_sql_query(
+        "SELECT * FROM guests WHERE branch=?",
+        conn,params=(user[3],))
 
-        doc=SimpleDocTemplate("report.pdf")
-        elements=[]
-        styles=getSampleStyleSheet()
+    st.dataframe(df)
 
-        df=pd.read_sql_query(
-            "SELECT * FROM guests WHERE branch=?",
-            conn,params=(user[3],))
-
-        elements.append(Paragraph("CARNIVLE Monthly Report",
-                                  styles["Heading1"]))
-        elements.append(Spacer(1,0.5*inch))
-
-        data=[df.columns.tolist()]+df.values.tolist()
-        t=Table(data)
-        t.setStyle(TableStyle([
-            ('BACKGROUND',(0,0),(-1,0),colors.grey),
-            ('GRID',(0,0),(-1,-1),1,colors.black)
-        ]))
-
-        elements.append(t)
-        doc.build(elements)
-
-        with open("report.pdf","rb") as f:
-            st.download_button("Download Report",f,"report.pdf")
+    st.download_button(
+        "Download Excel",
+        df.to_csv(index=False),
+        "guest_data.csv"
+    )
 
 # ================= ADMIN =================
 if menu=="Admin Panel" and user[2]=="admin":
 
-    tab1,tab2=st.tabs(["Create Staff","Access Control"])
+    st.subheader("Create Staff")
 
-    with tab1:
-        st.subheader("Add Staff")
+    new_user=st.text_input("Username")
+    new_pass=st.text_input("Password")
+    branch=st.text_input("Branch")
 
-        new_user=st.text_input("Username")
-        new_pass=st.text_input("Password")
-        role=st.selectbox("Role",["staff","manager"])
-        branch=st.text_input("Branch")
+    if st.button("Create Staff"):
+        c.execute("INSERT INTO users VALUES (?,?,?,?,?,?,?)",
+                  (new_user,hash_pass(new_pass),
+                   "staff",branch,1,0,0))
+        conn.commit()
+        st.success("Staff Created")
 
-        if st.button("Create Staff"):
-            c.execute("INSERT INTO users VALUES (?,?,?,?,?,?,?)",
-                      (new_user,hash_pass(new_pass),
-                       role,branch,1,0,0))
-            conn.commit()
-            st.success("Created")
-
-    with tab2:
-        st.subheader("Access Control")
-
-        all_users=pd.read_sql_query(
-            "SELECT * FROM users",conn)
-
-        st.dataframe(all_users)
-
-        sel=st.text_input("Username to Modify")
-        add=st.checkbox("Can Add Guest")
-        view=st.checkbox("Can View All Data")
-        download=st.checkbox("Can Download")
-
-        if st.button("Update Access"):
-            c.execute("""UPDATE users SET
-                      can_add_guest=?,
-                      can_view_all=?,
-                      can_download=?
-                      WHERE username=?""",
-                      (int(add),int(view),
-                       int(download),sel))
-            conn.commit()
-            st.success("Access Updated")
+    st.subheader("All Users")
+    all_users=pd.read_sql_query("SELECT * FROM users",conn)
+    st.dataframe(all_users)
