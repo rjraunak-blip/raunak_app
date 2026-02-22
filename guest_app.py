@@ -3,26 +3,31 @@ import sqlite3
 import hashlib
 import datetime
 import pandas as pd
+import os
 
-st.set_page_config(page_title="CARNIVLE Enterprise", layout="wide")
+st.set_page_config(page_title="Enterprise CRM", layout="wide")
 
-# ================= DATABASE =================
 DB = "carnivle_pro.db"
 conn = sqlite3.connect(DB, check_same_thread=False)
 c = conn.cursor()
 
-# Users table
+# ================= DATABASE =================
+
 c.execute("""
 CREATE TABLE IF NOT EXISTS users(
 username TEXT PRIMARY KEY,
 password TEXT,
 role TEXT,
 branch TEXT,
-can_delete INTEGER DEFAULT 0
+can_add_guest INTEGER,
+can_edit_guest INTEGER,
+can_delete_guest INTEGER,
+can_download INTEGER,
+can_view_all INTEGER,
+can_view_feedback INTEGER
 )
 """)
 
-# Guests table
 c.execute("""
 CREATE TABLE IF NOT EXISTS guests(
 id TEXT PRIMARY KEY,
@@ -32,13 +37,11 @@ category TEXT,
 branch TEXT,
 created_by TEXT,
 pax INTEGER,
-visit_date TEXT,
-feedback_given INTEGER DEFAULT 0,
-edit_count INTEGER DEFAULT 0
+date TEXT,
+edited INTEGER DEFAULT 0
 )
 """)
 
-# Feedback table
 c.execute("""
 CREATE TABLE IF NOT EXISTS feedback(
 mobile TEXT,
@@ -52,166 +55,214 @@ date TEXT
 conn.commit()
 
 # ================= UTIL =================
+
 def hash_pass(p):
     return hashlib.sha256(p.encode()).hexdigest()
 
 def generate_id():
-    return hashlib.md5(str(datetime.datetime.now()).encode()).hexdigest()[:8]
+    return hashlib.md5(str(datetime.datetime.now()).encode()).hexdigest()[:10]
 
 # Default Admin
 c.execute("SELECT * FROM users WHERE username='admin'")
 if not c.fetchone():
-    c.execute("INSERT INTO users VALUES (?,?,?,?,?)",
-              ("admin", hash_pass("admin123"),
-               "admin", "Head Office", 1))
+    c.execute("""
+    INSERT INTO users VALUES (?,?,?,?,?,?,?,?,?,?)
+    """,(
+        "admin",
+        hash_pass("admin123"),
+        "admin",
+        "HeadOffice",
+        1,1,1,1,1,1
+    ))
     conn.commit()
 
-# ================= LOGIN =================
-if "user" not in st.session_state:
+# ================= SESSION =================
 
-    st.title("Login Panel")
+if "login" not in st.session_state:
+    st.session_state.login = False
 
-    users_df = pd.read_sql_query(
-        "SELECT username FROM users", conn)
+if not st.session_state.login:
+    st.title("Enterprise CRM Login")
 
-    user_list = users_df["username"].tolist()
-
-    selected_user = st.selectbox("Select ID", user_list)
-    password = st.text_input("Password", type="password")
+    u = st.text_input("Username")
+    p = st.text_input("Password", type="password")
 
     if st.button("Login"):
-        c.execute("SELECT * FROM users WHERE username=?",
-                  (selected_user,))
+        c.execute("SELECT * FROM users WHERE username=?", (u,))
         user = c.fetchone()
-
-        if user and user[1] == hash_pass(password):
+        if user and user[1] == hash_pass(p):
+            st.session_state.login = True
             st.session_state.user = user
             st.rerun()
         else:
-            st.error("Wrong Password")
-
+            st.error("Invalid Login")
     st.stop()
 
 user = st.session_state.user
 
-st.sidebar.write("Logged in as:", user[0])
-st.sidebar.write("Role:", user[2])
-
+# Logout
 if st.sidebar.button("Logout"):
-    del st.session_state["user"]
+    st.session_state.login = False
     st.rerun()
 
-# ================= MENU =================
-menu = st.sidebar.radio("Menu",
-["Dashboard","Add Guest","My Entries","Feedback","Admin Panel"])
+st.sidebar.write("User:", user[0])
+st.sidebar.write("Role:", user[2])
+
+menu = st.sidebar.radio("Menu", [
+    "Dashboard",
+    "Guest Entry",
+    "Feedback",
+    "Admin Panel"
+])
 
 # ================= DASHBOARD =================
+
 if menu == "Dashboard":
 
-    df = pd.read_sql_query("SELECT * FROM guests", conn)
+    if user[8] == 1:
+        df = pd.read_sql_query("SELECT * FROM guests", conn)
+    else:
+        df = pd.read_sql_query(
+            "SELECT * FROM guests WHERE created_by=?",
+            conn, params=(user[0],)
+        )
 
-    st.metric("Total Guests", len(df))
-    st.metric("Repeat Customers",
-              df["mobile"].duplicated().sum())
+    st.subheader("Guest Data")
 
-# ================= ADD GUEST =================
-if menu == "Add Guest":
+    date_filter = st.date_input("Filter by Date", None)
 
-    st.subheader("Add Guest")
-
-    name = st.text_input("Name")
-    mobile = st.text_input("Mobile")
-    category = st.selectbox("Category",
-                            ["Walk-in","Zomato","Swiggy",
-                             "EazyDiner","Party","VIP"])
-    pax = st.number_input("PAX", 1)
-    visit_date = st.date_input("Visit Date")
-
-    if st.button("Save Guest"):
-        gid = generate_id()
-
-        c.execute("""
-        INSERT INTO guests VALUES (?,?,?,?,?,?,?,?,?,?)
-        """,
-        (gid,name,mobile,category,
-         user[3],user[0],pax,
-         str(visit_date),0,0))
-
-        conn.commit()
-        st.success("Guest Saved")
-
-# ================= MY ENTRIES =================
-if menu == "My Entries":
-
-    df = pd.read_sql_query(
-        "SELECT * FROM guests WHERE created_by=?",
-        conn, params=(user[0],))
+    if date_filter:
+        df = df[df["date"] == str(date_filter)]
 
     st.dataframe(df)
 
-    st.download_button(
-        "Download Excel",
-        df.to_csv(index=False),
-        "my_entries.csv"
-    )
+    st.metric("Total Guests", len(df))
+    st.metric("Total PAX", df["pax"].sum() if not df.empty else 0)
+
+    # Repeat detection
+    repeat = df["mobile"].value_counts()
+    repeat_customers = repeat[repeat > 1].count()
+    st.metric("Repeat Customers", repeat_customers)
+
+    if user[7] == 1:
+        st.download_button(
+            "Download Excel",
+            df.to_csv(index=False),
+            "guest_data.csv"
+        )
+
+# ================= GUEST ENTRY =================
+
+if menu == "Guest Entry" and user[4] == 1:
+
+    st.subheader("Add Guest")
+
+    name = st.text_input("Guest Name")
+    mobile = st.text_input("Mobile Number")
+    category = st.selectbox("Category",
+        ["Walk-In","Swiggy","Zomato","EazyDiner","Party","VIP"])
+    pax = st.number_input("PAX", 1)
+    entry_date = st.date_input("Entry Date", datetime.date.today())
+
+    if st.button("Add Guest"):
+        gid = generate_id()
+        c.execute("""
+        INSERT INTO guests VALUES (?,?,?,?,?,?,?,?,0)
+        """,(
+            gid,name,mobile,category,
+            user[3],user[0],pax,
+            str(entry_date)
+        ))
+        conn.commit()
+        st.success("Guest Added")
 
 # ================= FEEDBACK =================
+
 if menu == "Feedback":
 
     st.subheader("Customer Feedback")
 
-    mobile = st.text_input("Mobile")
+    mobile = st.text_input("Mobile Number")
     name = st.text_input("Name")
     rating = st.slider("Rating",1,5)
     comment = st.text_area("Comment")
 
     if st.button("Submit Feedback"):
-        c.execute("INSERT INTO feedback VALUES (?,?,?,?,?)",
-                  (mobile,name,rating,
-                   comment,str(datetime.date.today())))
-
-        c.execute("UPDATE guests SET feedback_given=1 WHERE mobile=?",
-                  (mobile,))
+        c.execute("""
+        INSERT INTO feedback VALUES (?,?,?,?,?)
+        """,(
+            mobile,name,rating,comment,
+            str(datetime.date.today())
+        ))
         conn.commit()
-
         st.success("Feedback Submitted")
 
+    if user[9] == 1:
+        fb = pd.read_sql_query("SELECT * FROM feedback", conn)
+        st.dataframe(fb)
+
 # ================= ADMIN PANEL =================
+
 if menu == "Admin Panel" and user[2] == "admin":
 
-    tab1, tab2, tab3 = st.tabs(
-        ["Create Staff","All Guests","All Feedback"])
+    tab1, tab2 = st.tabs(["Create Staff","Access Control"])
 
-    # Create Staff
     with tab1:
-        new_user = st.text_input("Staff ID")
+        st.subheader("Create Staff")
+
+        new_user = st.text_input("Username")
         new_pass = st.text_input("Password")
         branch = st.text_input("Branch")
 
-        if st.button("Create Staff"):
-            c.execute("INSERT INTO users VALUES (?,?,?,?,?)",
-                      (new_user,
-                       hash_pass(new_pass),
-                       "staff",
-                       branch,
-                       0))
+        if st.button("Create"):
+            c.execute("""
+            INSERT INTO users VALUES (?,?,?,?,?,?,?,?,?,?)
+            """,(
+                new_user,
+                hash_pass(new_pass),
+                "staff",
+                branch,
+                1,1,0,1,0,0
+            ))
             conn.commit()
             st.success("Staff Created")
 
-    # All Guests
     with tab2:
-        df = pd.read_sql_query("SELECT * FROM guests", conn)
-        st.dataframe(df)
+        st.subheader("Access Control")
 
-        delete_id = st.text_input("Guest ID to Delete")
+        users_df = pd.read_sql_query("SELECT * FROM users", conn)
+        st.dataframe(users_df)
 
-        if st.button("Delete Guest"):
-            c.execute("DELETE FROM guests WHERE id=?",
-                      (delete_id,))
+        selected = st.selectbox(
+            "Select User",
+            users_df["username"]
+        )
+
+        can_add = st.checkbox("Can Add")
+        can_edit = st.checkbox("Can Edit")
+        can_delete = st.checkbox("Can Delete")
+        can_download = st.checkbox("Can Download")
+        can_view_all = st.checkbox("Can View All")
+        can_view_feedback = st.checkbox("Can View Feedback")
+
+        if st.button("Update Access"):
+            c.execute("""
+            UPDATE users SET
+            can_add_guest=?,
+            can_edit_guest=?,
+            can_delete_guest=?,
+            can_download=?,
+            can_view_all=?,
+            can_view_feedback=?
+            WHERE username=?
+            """,(
+                int(can_add),
+                int(can_edit),
+                int(can_delete),
+                int(can_download),
+                int(can_view_all),
+                int(can_view_feedback),
+                selected
+            ))
             conn.commit()
-            st.success("Deleted")
-
-    # All Feedback
-    with tab3:
-        fb = pd.read_sql_query("SELECT * FROM feedback", conn)
-        st.dataframe(fb)
+            st.success("Access Updated")
