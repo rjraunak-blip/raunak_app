@@ -72,13 +72,11 @@ if not c.fetchone():
 query=st.query_params
 
 if "feedback" in query:
-    branch=query.get("branch","")
 
-    st.title("⭐ Guest Feedback")
+    st.title("⭐ Guest Feedback Form")
 
     mobile=st.text_input("Mobile Number")
 
-    # guest name auto fetch
     guest=pd.read_sql_query(
         "SELECT name FROM guests WHERE mobile=? ORDER BY visit_date DESC",
         conn,params=(mobile,))
@@ -89,15 +87,15 @@ if "feedback" in query:
     else:
         guest_name=st.text_input("Your Name")
 
-    overall=st.slider("Overall",1,5)
-    food=st.slider("Food",1,5)
+    overall=st.slider("Overall Experience",1,5)
+    food=st.slider("Food Quality",1,5)
     service=st.slider("Service",1,5)
     staff=st.slider("Staff Behaviour",1,5)
     comment=st.text_area("Comment")
 
-    if st.button("Submit"):
+    if st.button("Submit Feedback"):
         c.execute("INSERT INTO feedback VALUES (?,?,?,?,?,?,?,?,?)",
-                  (mobile,guest_name,branch,
+                  (mobile,guest_name,"Head Office",
                    overall,food,service,staff,
                    comment,str(datetime.date.today())))
         conn.commit()
@@ -154,7 +152,6 @@ if menu=="Guest Entry":
     category=st.selectbox("Category",
         ["Walk-in","Zomato","Swiggy","EasyDiner","Party","VIP"])
     pax=st.number_input("PAX",1)
-
     visit_date=st.date_input("Visit Date",datetime.date.today())
 
     if st.button("Add Guest"):
@@ -164,7 +161,6 @@ if menu=="Guest Entry":
             conn,params=(mobile,))
 
         repeat_count=len(old)+1
-
         gid=generate_id(name,mobile)
 
         c.execute("INSERT INTO guests VALUES (?,?,?,?,?,?,?,?,?)",
@@ -175,7 +171,7 @@ if menu=="Guest Entry":
 
         st.success(f"Guest Added (Visit #{repeat_count})")
 
-        feedback_link=f"https://rjraunakapp.streamlit.app/?feedback=1&branch={user[3]}"
+        feedback_link="https://rjraunakapp.streamlit.app/?feedback=1"
         message=f"Thank you {name} ❤️\nPlease give feedback:\n{feedback_link}"
         encoded=urllib.parse.quote(message)
         whatsapp_url=f"https://wa.me/91{mobile}?text={encoded}"
@@ -199,27 +195,53 @@ if menu=="My Guests":
                        df.to_csv(index=False),
                        "my_guests.csv")
 
-# ---------------- FEEDBACK DATA ----------------
+# ---------------- FEEDBACK ----------------
 
 if menu=="Feedback Data":
-
     fb=pd.read_sql_query("SELECT * FROM feedback",conn)
     st.dataframe(fb)
 
 # ---------------- ADMIN PANEL ----------------
 
-if menu=="Admin Panel" and user[2]=="admin":
+if menu=="Admin Panel":
 
-    st.subheader("Repeat Guests Report")
+    if user[2]!="admin":
+        st.error("Admin Only Access")
+        st.stop()
 
-    repeat_df=pd.read_sql_query(
-        "SELECT name,mobile,repeat_count,visit_date,created_by FROM guests WHERE repeat_count>1",
-        conn)
+    tab1,tab2,tab3=st.tabs(["Create Staff","Repeat Guests","All Data"])
 
-    st.dataframe(repeat_df)
+    # ---- CREATE STAFF ----
+    with tab1:
+        st.subheader("Add New Staff")
 
-    st.subheader("All Guests")
-    st.dataframe(pd.read_sql_query("SELECT * FROM guests",conn))
+        new_user=st.text_input("Username")
+        new_pass=st.text_input("Password")
+        branch_name=st.text_input("Branch")
 
-    st.subheader("All Feedback")
-    st.dataframe(pd.read_sql_query("SELECT * FROM feedback",conn))
+        if st.button("Create Staff"):
+            try:
+                c.execute("INSERT INTO users VALUES (?,?,?,?)",
+                          (new_user,
+                           hash_pass(new_pass),
+                           "staff",
+                           branch_name))
+                conn.commit()
+                st.success("Staff Created Successfully")
+            except:
+                st.error("Username Already Exists")
+
+    # ---- REPEAT REPORT ----
+    with tab2:
+        repeat_df=pd.read_sql_query(
+            "SELECT name,mobile,repeat_count,visit_date,created_by FROM guests WHERE repeat_count>1",
+            conn)
+        st.dataframe(repeat_df)
+
+    # ---- ALL DATA ----
+    with tab3:
+        st.subheader("All Guests")
+        st.dataframe(pd.read_sql_query("SELECT * FROM guests",conn))
+
+        st.subheader("All Feedback")
+        st.dataframe(pd.read_sql_query("SELECT * FROM feedback",conn))
