@@ -3,14 +3,16 @@ import sqlite3
 import hashlib
 import datetime
 import pandas as pd
+import qrcode
+import os
 
-st.set_page_config(page_title="CARNIVLE Enterprise", layout="wide")
+st.set_page_config(page_title="Carnivle Pro", layout="wide")
 
-DB = "carnivle_pro.db"
-conn = sqlite3.connect(DB, check_same_thread=False)
-c = conn.cursor()
+DB="carnivle.db"
+conn=sqlite3.connect(DB,check_same_thread=False)
+c=conn.cursor()
 
-# ================= DATABASE =================
+# ---------------- DATABASE ----------------
 
 c.execute("""
 CREATE TABLE IF NOT EXISTS users(
@@ -26,11 +28,11 @@ CREATE TABLE IF NOT EXISTS guests(
 id TEXT PRIMARY KEY,
 name TEXT,
 mobile TEXT,
+category TEXT,
+vip INTEGER,
 branch TEXT,
 created_by TEXT,
-category TEXT,
 pax INTEGER,
-vip INTEGER,
 date TEXT
 )
 """)
@@ -50,208 +52,181 @@ date TEXT
 
 conn.commit()
 
-# ================= UTIL =================
+# ---------------- UTIL ----------------
 
 def hash_pass(p):
     return hashlib.sha256(p.encode()).hexdigest()
 
-def generate_id(name, mobile):
-    return hashlib.md5(
-        (name + mobile + str(datetime.datetime.now())).encode()
-    ).hexdigest()[:8]
+def generate_id(name,mobile):
+    return hashlib.md5((name+mobile+str(datetime.datetime.now())).encode()).hexdigest()[:8]
 
-# Default Admin
-if not c.execute("SELECT * FROM users WHERE username='admin'").fetchone():
+# default admin
+c.execute("SELECT * FROM users WHERE username='admin'")
+if not c.fetchone():
     c.execute("INSERT INTO users VALUES (?,?,?,?)",
-              ("admin", hash_pass("admin123"), "admin", "Head Office"))
+              ("admin",hash_pass("admin123"),"admin","Head Office"))
     conn.commit()
 
-# ================= FEEDBACK PAGE =================
+# ---------------- FEEDBACK DIRECT PAGE ----------------
 
-query_params = st.query_params
+query=st.query_params
 
-if "feedback" in query_params:
+if "feedback" in query:
 
-    mobile = query_params["feedback"]
-    branch = query_params.get("branch", "Head Office")
+    branch=query.get("branch","")
 
-    st.title("🍽 CARNIVLE Feedback")
+    st.title("⭐ Guest Feedback Form")
 
-    overall = st.slider("Overall Experience", 1, 5, 4)
-    food = st.slider("Food Quality", 1, 5, 4)
-    service = st.slider("Service Quality", 1, 5, 4)
-    staff = st.slider("Staff Behaviour", 1, 5, 4)
-    comment = st.text_area("Comment")
+    mobile=st.text_input("Mobile Number")
+
+    overall=st.slider("Overall Rating",1,5)
+    food=st.slider("Food Rating",1,5)
+    service=st.slider("Service Rating",1,5)
+    staff=st.slider("Staff Behaviour",1,5)
+
+    comment=st.text_area("Comment")
 
     if st.button("Submit Feedback"):
+        c.execute("INSERT INTO feedback VALUES (?,?,?,?,?,?,?,?)",
+                  (mobile,branch,overall,food,
+                   service,staff,comment,
+                   str(datetime.date.today())))
+        conn.commit()
+        st.success("Thank You ❤️")
+        st.stop()
 
-        today = str(datetime.date.today())
+# ---------------- LOGIN ----------------
 
-        already = c.execute("""
-        SELECT * FROM feedback
-        WHERE mobile=? AND date=?
-        """, (mobile, today)).fetchone()
+if "login" not in st.session_state:
+    st.session_state.login=False
 
-        if already:
-            st.warning("Feedback already submitted today.")
-        else:
-            c.execute("""
-            INSERT INTO feedback
-            VALUES (?,?,?,?,?,?,?,?)
-            """, (mobile, branch, overall,
-                  food, service, staff,
-                  comment, today))
-            conn.commit()
-            st.success("Thank you ❤️")
-            st.balloons()
+if not st.session_state.login:
 
-    st.stop()
+    st.title("Carnivle Pro Login")
 
-# ================= LOGIN =================
+    u=st.text_input("Username")
+    p=st.text_input("Password",type="password")
 
-if "logged_in" not in st.session_state:
-    st.session_state.logged_in = False
-
-if not st.session_state.logged_in:
-
-    st.title("🍽 CARNIVLE Enterprise")
-
-    with st.form("login_form_safe"):
-        username_input = st.text_input("Username")
-        password_input = st.text_input("Password", type="password")
-        login_button = st.form_submit_button("Login")
-
-    if login_button:
-        user_data = c.execute(
-            "SELECT * FROM users WHERE username=?",
-            (username_input,)
-        ).fetchone()
-
-        if user_data and user_data[1] == hash_pass(password_input):
-            st.session_state.logged_in = True
-            st.session_state.current_user = user_data
+    if st.button("Login"):
+        c.execute("SELECT * FROM users WHERE username=?",(u,))
+        data=c.fetchone()
+        if data and data[1]==hash_pass(p):
+            st.session_state.login=True
+            st.session_state.user=data
             st.rerun()
         else:
             st.error("Invalid Login")
-
     st.stop()
 
-user = st.session_state.current_user
+user=st.session_state.user
 
-# ================= SIDEBAR =================
+st.sidebar.write("User:",user[0])
+st.sidebar.write("Role:",user[2])
+st.sidebar.write("Branch:",user[3])
 
-st.sidebar.title("CARNIVLE")
-st.sidebar.write(f"User: {user[0]}")
-st.sidebar.write(f"Role: {user[2]}")
-st.sidebar.write(f"Branch: {user[3]}")
-
-if user[2] == "admin":
-    menu = st.sidebar.radio("Menu",
-                            ["Dashboard", "Guest Entry", "Admin Panel"])
-else:
-    menu = st.sidebar.radio("Menu",
-                            ["Dashboard", "Guest Entry"])
+menu=st.sidebar.radio("Menu",
+["Dashboard","Guest Entry","QR Generator","Feedback Data","Admin Panel"])
 
 if st.sidebar.button("Logout"):
-    st.session_state.logged_in = False
+    st.session_state.login=False
     st.rerun()
 
-# ================= DASHBOARD =================
+# ---------------- DASHBOARD ----------------
 
-if menu == "Dashboard":
+if menu=="Dashboard":
 
-    df = pd.read_sql_query(
+    df=pd.read_sql_query(
         "SELECT * FROM guests WHERE branch=?",
-        conn, params=(user[3],))
+        conn,params=(user[3],))
 
-    fb = pd.read_sql_query(
+    fb=pd.read_sql_query(
         "SELECT * FROM feedback WHERE branch=?",
-        conn, params=(user[3],))
+        conn,params=(user[3],))
 
-    col1, col2, col3 = st.columns(3)
+    col1,col2,col3,col4=st.columns(4)
 
-    col1.metric("Total Guests", len(df))
+    col1.metric("Total Guests",len(df))
     col2.metric("Total PAX",
-                int(df["pax"].sum()) if not df.empty else 0)
-    col3.metric("Avg Rating",
-                round(fb["overall"].mean(), 2)
+                df["pax"].sum() if not df.empty else 0)
+    col3.metric("VIP Guests",
+                df["vip"].sum() if not df.empty else 0)
+    col4.metric("Avg Rating",
+                round(fb["overall"].mean(),2)
                 if not fb.empty else 0)
 
-    if not fb.empty:
-        low = fb[fb["overall"] <= 2]
-        if not low.empty:
-            st.error("⚠️ Low Rating Alert!")
+# ---------------- GUEST ENTRY ----------------
 
-    st.dataframe(df)
-
-# ================= GUEST ENTRY =================
-
-if menu == "Guest Entry":
+if menu=="Guest Entry":
 
     st.subheader("Add Guest")
 
-    with st.form("guest_form_safe", clear_on_submit=True):
+    name=st.text_input("Name")
+    mobile=st.text_input("Mobile")
+    category=st.selectbox("Category",
+        ["Walk-in","Zomato","Swiggy","EasyDiner","Party","VIP"])
+    pax=st.number_input("PAX",1)
 
-        col1, col2 = st.columns(2)
+    if st.button("Add Guest"):
 
-        with col1:
-            name = st.text_input("Guest Name")
-            mobile = st.text_input("Mobile")
+        vip=1 if category=="VIP" else 0
 
-        with col2:
-            category = st.selectbox(
-                "Category",
-                ["Walk-in", "Zomato", "Swiggy",
-                 "EazyDiner", "Party", "VIP Guest"]
-            )
-            pax = st.number_input("PAX", 1)
+        gid=generate_id(name,mobile)
 
-        submit_guest = st.form_submit_button("Add Guest")
-
-    if submit_guest:
-
-        vip = 1 if category == "VIP Guest" else 0
-        gid = generate_id(name, mobile)
-
-        c.execute("""
-        INSERT INTO guests
-        VALUES (?,?,?,?,?,?,?,?,?)
-        """,
-                  (gid, name, mobile,
-                   user[3], user[0],
-                   category, pax, vip,
+        c.execute("INSERT INTO guests VALUES (?,?,?,?,?,?,?,?,?)",
+                  (gid,name,mobile,category,vip,
+                   user[3],user[0],pax,
                    str(datetime.date.today())))
         conn.commit()
 
-        st.success("Guest Added Successfully ✅")
+        st.success("Guest Added")
 
-        feedback_link = f"?feedback={mobile}&branch={user[3]}"
-        st.info("Send this link to customer:")
-        st.code(feedback_link)
+# ---------------- QR ----------------
 
-# ================= ADMIN PANEL =================
+if menu=="QR Generator":
 
-if menu == "Admin Panel" and user[2] == "admin":
+    table=st.text_input("Table Number")
 
-    st.subheader("Admin Control")
+    if st.button("Generate QR"):
 
-    tab1, tab2 = st.tabs(["Create Staff", "View Feedback"])
+        base_url="https://rjraunakapp.streamlit.app"  # apna link
+        url=f"{base_url}?feedback=table{table}&branch={user[3]}"
 
-    with tab1:
-        new_user = st.text_input("New Username")
-        new_pass = st.text_input("New Password")
-        branch_name = st.text_input("Branch Name")
+        img=qrcode.make(url)
+        img.save("qr.png")
 
-        if st.button("Create Staff"):
-            c.execute("INSERT INTO users VALUES (?,?,?,?)",
-                      (new_user,
-                       hash_pass(new_pass),
-                       "staff",
-                       branch_name))
-            conn.commit()
-            st.success("Staff Created")
+        st.image("qr.png")
+        st.markdown(f"[Click Here For Feedback]({url})")
 
-    with tab2:
-        fb_data = pd.read_sql_query(
-            "SELECT * FROM feedback", conn)
-        st.dataframe(fb_data)
+# ---------------- FEEDBACK DATA ----------------
+
+if menu=="Feedback Data":
+
+    fb=pd.read_sql_query(
+        "SELECT * FROM feedback WHERE branch=?",
+        conn,params=(user[3],))
+
+    st.dataframe(fb)
+
+    if not fb.empty:
+        st.download_button("Download Excel",
+                           fb.to_csv(index=False),
+                           "feedback.csv")
+
+# ---------------- ADMIN ----------------
+
+if menu=="Admin Panel" and user[2]=="admin":
+
+    st.subheader("Create Staff")
+
+    new_user=st.text_input("Username")
+    new_pass=st.text_input("Password")
+    branch_name=st.text_input("Branch Name")
+
+    if st.button("Create Staff"):
+        c.execute("INSERT INTO users VALUES (?,?,?,?)",
+                  (new_user,
+                   hash_pass(new_pass),
+                   "staff",
+                   branch_name))
+        conn.commit()
+        st.success("Staff Created")
