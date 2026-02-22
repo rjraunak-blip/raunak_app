@@ -134,4 +134,4 @@ elif menu == "Dashboard":
     col2.metric("Zomato Orders", len(df[df["Category"]=="Zomato"]))
     col3.metric("Swiggy Orders", len(df[df["Category"]=="Swiggy"]))
 
-    st.dataframe(df)
+    st.dataframe(df) 
