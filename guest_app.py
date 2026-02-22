@@ -1,161 +1,112 @@
 import streamlit as st
 import sqlite3
 import pandas as pd
-import qrcode
-from io import BytesIO
 from datetime import datetime
 
-# ---------------- DATABASE ---------------- #
+# ---------------- PAGE CONFIG ----------------
+st.set_page_config(
+    page_title="Restaurant Intelligence CRM",
+    page_icon="🍽️",
+    layout="wide"
+)
 
-conn = sqlite3.connect("crm.db", check_same_thread=False)
-cursor = conn.cursor()
+# ---------------- PREMIUM CSS ----------------
+st.markdown("""
+<style>
+.main {
+    background-color: #0e1117;
+}
+h1, h2, h3, h4 {
+    color: white;
+}
+.stMetric {
+    background-color: #1c1f26;
+    padding: 15px;
+    border-radius: 12px;
+}
+.block-container {
+    padding-top: 2rem;
+}
+</style>
+""", unsafe_allow_html=True)
 
-cursor.execute("""
+# ---------------- DATABASE ----------------
+conn = sqlite3.connect("restaurant.db", check_same_thread=False)
+c = conn.cursor()
+
+c.execute("""
 CREATE TABLE IF NOT EXISTS visits(
-id INTEGER PRIMARY KEY AUTOINCREMENT,
-visit_id TEXT,
-date TEXT,
-guest_name TEXT,
-mobile TEXT,
-guest_count INTEGER,
-category TEXT,
-staff TEXT,
-food_rating INTEGER DEFAULT 0,
-service_rating INTEGER DEFAULT 0,
-behaviour_rating INTEGER DEFAULT 0,
-edit_count INTEGER DEFAULT 0
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT,
+    mobile TEXT,
+    guest_count INTEGER,
+    category TEXT,
+    food_rating INTEGER,
+    service_rating INTEGER,
+    behaviour_rating INTEGER,
+    date TEXT
 )
 """)
-
 conn.commit()
 
-# ---------------- USERS ---------------- #
-
-USERS = {
-"staff1": {"password":"1111","role":"staff"},
-"admin": {"password":"admin123","role":"admin"}
-}
-
-# ---------------- SESSION ---------------- #
-
+# ---------------- SESSION ----------------
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
-    st.session_state.role = None
-    st.session_state.user = None
 
-# ---------------- LOGIN ---------------- #
-
+# ---------------- LOGIN ----------------
 def login():
-    st.title("Restaurant CRM Login")
+    st.markdown("<h1 style='text-align:center;'>🍽️ Restaurant Intelligence CRM</h1>", unsafe_allow_html=True)
+    st.subheader("Login To Continue")
 
-    u = st.text_input("Username")
-    p = st.text_input("Password", type="password")
+    role = st.selectbox("Login As", ["Admin", "Staff"])
+    password = st.text_input("Password", type="password")
 
     if st.button("Login"):
-        if u in USERS and USERS[u]["password"] == p:
-            st.session_state.logged_in=True
-            st.session_state.role=USERS[u]["role"]
-            st.session_state.user=u
+        if role == "Admin" and password == "admin123":
+            st.session_state.logged_in = True
+            st.session_state.role = "Admin"
+            st.rerun()
+        elif role == "Staff" and password == "staff123":
+            st.session_state.logged_in = True
+            st.session_state.role = "Staff"
             st.rerun()
         else:
-            st.error("Wrong Login")
+            st.error("Wrong Credentials")
 
-# ---------------- QR ---------------- #
-
-def make_qr(link):
-    qr = qrcode.make(link)
-    buf = BytesIO()
-    qr.save(buf)
-    return buf.getvalue()
-
-# ---------------- REVIEW PAGE ---------------- #
-
-def review_page(visit_id):
-    st.title("Guest Feedback Form")
-
-    food = st.slider("Food Quality ⭐",1,5)
-    service = st.slider("Service ⭐",1,5)
-    behaviour = st.slider("Staff Behaviour ⭐",1,5)
-
-    if st.button("Submit Feedback"):
-        cursor.execute("""
-        UPDATE visits SET
-        food_rating=?,
-        service_rating=?,
-        behaviour_rating=?
-        WHERE visit_id=?
-        """,(food,service,behaviour,visit_id))
-        conn.commit()
-        st.success("Thank You For Feedback ❤️")
-
-# ---------------- STAFF PANEL ---------------- #
-
+# ---------------- STAFF PANEL ----------------
 def staff_panel():
+    st.title("📝 Guest Entry Panel")
 
-    st.title("Staff Panel")
+    name = st.text_input("Guest Name")
+    mobile = st.text_input("Mobile Number")
+    guest_count = st.number_input("Number of Guests", 1, 20)
+    category = st.selectbox("Category", ["Dine-In", "Delivery", "Takeaway"])
+
+    food = st.slider("Food Rating", 1, 5)
+    service = st.slider("Service Rating", 1, 5)
+    behaviour = st.slider("Behaviour Rating", 1, 5)
+
+    if st.button("Save Entry"):
+        c.execute("""
+        INSERT INTO visits(name, mobile, guest_count, category,
+        food_rating, service_rating, behaviour_rating, date)
+        VALUES (?,?,?,?,?,?,?,?)
+        """, (name, mobile, guest_count, category,
+              food, service, behaviour,
+              datetime.now().strftime("%Y-%m-%d")))
+        conn.commit()
+
+        st.success("Entry Saved Successfully ✅")
+        st.balloons()
 
     if st.button("Logout"):
         st.session_state.logged_in=False
         st.rerun()
 
-    st.subheader("Create Guest Entry")
-
-    name = st.text_input("Guest Name")
-    mobile = st.text_input("Mobile")
-    count = st.number_input("Guest Count",1)
-    cat = st.selectbox("Category",
-    ["Swiggy","Zomato","EazyDiner","Party","Walk-In"])
-
-    if st.button("Save Entry"):
-
-        visit_id = "V"+datetime.now().strftime("%Y%m%d%H%M%S")
-
-        cursor.execute("""
-        INSERT INTO visits
-        (visit_id,date,guest_name,mobile,guest_count,category,staff)
-        VALUES (?,?,?,?,?,?,?)
-        """,
-        (
-        visit_id,
-        datetime.now().strftime("%Y-%m-%d"),
-        name,
-        mobile,
-        count,
-        cat,
-        st.session_state.user
-        ))
-
-        conn.commit()
-
-        st.success("Entry Saved")
-
-        review_link = f"?review={visit_id}"
-        qr = make_qr(review_link)
-        st.image(qr, caption="Scan For Feedback")
-
-    df = pd.read_sql_query(
-    "SELECT * FROM visits WHERE staff=?",
-    conn,
-    params=(st.session_state.user,)
-    )
-
-    st.subheader("My Entries")
-    st.dataframe(df)
-
-    if not df.empty:
-        st.metric("Total Guests", df["guest_count"].sum())
-
-    st.download_button(
-    "Download My Data",
-    df.to_csv(index=False),
-    "staff_data.csv"
-    )
-
-# ---------------- ADMIN PANEL ---------------- #
-
+# ---------------- ADMIN PANEL ----------------
 def admin_panel():
 
-    st.title("Admin Dashboard")
+    st.title("📊 Restaurant Intelligence Dashboard")
 
     if st.button("Logout"):
         st.session_state.logged_in=False
@@ -163,54 +114,70 @@ def admin_panel():
 
     df = pd.read_sql_query("SELECT * FROM visits", conn)
 
-    st.dataframe(df)
+    if df.empty:
+        st.warning("No Data Available")
+        return
 
-    if not df.empty:
+    total_guests = df["guest_count"].sum()
+    total_visits = len(df)
 
-        st.metric("Total Guests", df["guest_count"].sum())
+    repeat = df.groupby("mobile").size()
+    repeat_customers = repeat[repeat > 1].count()
+    repeat_percent = (repeat_customers / repeat.count()) * 100 if repeat.count() > 0 else 0
 
-        # VIP Detection
-        st.subheader("VIP Customers (5+ Visits)")
-        vip = df.groupby("mobile").size()
-        vip = vip[vip>=5]
-        st.write(vip)
-
-        # Low Rating Alert
-        st.subheader("Low Rating Alert")
-        low = df[
-        (df["food_rating"]<=2) |
-        (df["service_rating"]<=2) |
-        (df["behaviour_rating"]<=2)
-        ]
-        st.dataframe(low)
-
-        # Staff Performance %
-        st.subheader("Staff Performance %")
-
-        df["avg_rating"] = (
-        df["food_rating"]+
-        df["service_rating"]+
+    df["avg_rating"] = (
+        df["food_rating"] +
+        df["service_rating"] +
         df["behaviour_rating"]
-        )/3
+    ) / 3
 
-        performance = df.groupby("staff")["avg_rating"].mean()
+    avg_rating = df["avg_rating"].mean()
 
-        performance_percent = (performance/5)*100
+    today = datetime.now().strftime("%Y-%m-%d")
+    today_count = df[df["date"] == today]["guest_count"].sum()
+    total_previous = df[df["date"] != today]["guest_count"].sum()
 
-        st.write(performance_percent)
+    growth = 0
+    if total_previous > 0:
+        growth = ((today_count - total_previous) / total_previous) * 100
 
-# ---------------- ROUTER ---------------- #
+    col1, col2, col3, col4 = st.columns(4)
 
-params = st.query_params
-review_id = params.get("review")
+    col1.metric("Total Guests", total_guests)
+    col2.metric("Repeat %", f"{repeat_percent:.1f}%")
+    col3.metric("Avg Rating ⭐", f"{avg_rating:.2f}")
+    col4.metric("Today Growth %", f"{growth:.1f}%")
 
-if review_id:
-    review_page(review_id)
+    st.divider()
+
+    st.subheader("📊 Category Distribution")
+    category_data = df.groupby("category")["guest_count"].sum()
+    st.bar_chart(category_data)
+
+    st.divider()
+
+    st.subheader("🏆 VIP Customers (3+ Visits)")
+    vip = repeat[repeat >= 3]
+    st.write(vip)
+
+    st.subheader("⚠ Low Rating Alert")
+    low = df[df["avg_rating"] <= 2.5]
+    st.dataframe(low)
+
+    st.subheader("🧠 Smart Insights")
+
+    if repeat_percent < 20:
+        st.warning("Customer retention is low. Improve repeat experience.")
+    if avg_rating < 3:
+        st.error("Average rating is low. Service attention required.")
+    if growth > 10:
+        st.success("Strong growth trend detected 🚀")
+
+# ---------------- ROUTER ----------------
+if not st.session_state.logged_in:
+    login()
 else:
-    if not st.session_state.logged_in:
-        login()
+    if st.session_state.role == "Admin":
+        admin_panel()
     else:
-        if st.session_state.role=="staff":
-            staff_panel()
-        else:
-            admin_panel()
+        staff_panel()
