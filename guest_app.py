@@ -3,18 +3,18 @@ import sqlite3
 import hashlib
 import datetime
 
-st.set_page_config(page_title="Carnivale Guest System", layout="wide")
+st.set_page_config(page_title="Carnivale System", layout="wide")
 
 # ================= DATABASE =================
-conn = sqlite3.connect("data.db", check_same_thread=False)
+conn = sqlite3.connect("carnivale.db", check_same_thread=False)
 c = conn.cursor()
 
 c.execute("""CREATE TABLE IF NOT EXISTS users(
-id TEXT,
+uid TEXT,
 username TEXT,
 password TEXT,
-can_add_guest INTEGER,
-can_view_dashboard INTEGER
+can_add INTEGER,
+can_view INTEGER
 )""")
 
 c.execute("""CREATE TABLE IF NOT EXISTS guests(
@@ -22,8 +22,8 @@ gid TEXT,
 name TEXT,
 mobile TEXT,
 category TEXT,
-added_by TEXT,
 pax INTEGER,
+added_by TEXT,
 date TEXT,
 feedback_done INTEGER
 )""")
@@ -38,178 +38,181 @@ date TEXT
 conn.commit()
 
 # ================= DEFAULT ADMIN =================
-admin_user = "admin"
 admin_pass = hashlib.md5("admin123".encode()).hexdigest()
-
-c.execute("SELECT * FROM users WHERE username=?", (admin_user,))
+c.execute("SELECT * FROM users WHERE username='admin'")
 if not c.fetchone():
     c.execute("INSERT INTO users VALUES (?,?,?,?,?)",
-              ("1", admin_user, admin_pass, 1, 1))
+              ("1","admin",admin_pass,1,1))
     conn.commit()
 
-# ================= LOGIN =================
+# ================= SESSION =================
 if "login" not in st.session_state:
-    st.session_state.login = False
+    st.session_state.login=False
 if "user" not in st.session_state:
-    st.session_state.user = None
+    st.session_state.user=None
 
-def login_user(username, password):
-    hashed = hashlib.md5(password.encode()).hexdigest()
-    c.execute("SELECT * FROM users WHERE username=? AND password=?",
-              (username, hashed))
-    return c.fetchone()
+# ================= PUBLIC FEEDBACK =================
+params = st.query_params
+if "feedback" in params:
+    mobile = params["feedback"]
+    st.title("Guest Feedback")
 
-# ================= FEEDBACK PUBLIC =================
-query_params = st.query_params
+    rating = st.slider("Rate Us (1-5)",1,5)
+    comment = st.text_area("Comment")
 
-if "feedback" in query_params:
-
-    mobile = query_params["feedback"]
-
-    st.title("Carnivale Feedback")
-
-    rating = st.slider("Rate Us (1-5)", 1, 5)
-    comment = st.text_area("Your Feedback")
-
-    if st.button("Submit Feedback"):
-
+    if st.button("Submit"):
         c.execute("INSERT INTO feedback VALUES (?,?,?,?)",
-                  (mobile, rating, comment, str(datetime.date.today())))
+                  (mobile,rating,comment,str(datetime.date.today())))
         c.execute("UPDATE guests SET feedback_done=1 WHERE mobile=?",
                   (mobile,))
         conn.commit()
-
-        st.success("Thank you for your feedback ❤️")
+        st.success("Thank You ❤️")
         st.stop()
 
-# ================= LOGIN PAGE =================
+# ================= LOGIN =================
+def login_user(username,password):
+    hashed=hashlib.md5(password.encode()).hexdigest()
+    c.execute("SELECT * FROM users WHERE username=? AND password=?",
+              (username,hashed))
+    return c.fetchone()
+
 if not st.session_state.login:
 
     st.title("Login")
 
-    username = st.text_input("Username")
-    password = st.text_input("Password", type="password")
+    c.execute("SELECT username FROM users")
+    all_users=[u[0] for u in c.fetchall()]
+
+    selected_user=st.selectbox("Select ID",all_users)
+    password=st.text_input("Password",type="password")
 
     if st.button("Login"):
-        user = login_user(username, password)
+        user=login_user(selected_user,password)
         if user:
-            st.session_state.login = True
-            st.session_state.user = user
+            st.session_state.login=True
+            st.session_state.user=user
             st.rerun()
         else:
-            st.error("Invalid Credentials")
+            st.error("Wrong Password")
 
     st.stop()
 
-user = st.session_state.user
+user=st.session_state.user
 
-menu = st.sidebar.selectbox("Menu",
-                             ["Add Guest",
-                              "Dashboard",
-                              "Manage Staff"])
+# ================= LOGOUT =================
+col1,col2=st.columns([8,1])
+with col2:
+    if st.button("Logout"):
+        st.session_state.login=False
+        st.session_state.user=None
+        st.rerun()
+
+menu=st.sidebar.selectbox("Menu",
+                          ["Add Guest","Dashboard","Manage Staff"])
 
 # ================= ADD GUEST =================
-if menu == "Add Guest" and user[3] == 1:
+if menu=="Add Guest" and user[3]==1:
 
     st.subheader("Fast Guest Entry")
 
-    with st.form("guest_form", clear_on_submit=True):
+    with st.form("guest_form",clear_on_submit=True):
 
-        name = st.text_input("Guest Name")
-        mobile = st.text_input("Mobile")
-        category = st.selectbox(
-            "Category",
-            ["Walk-In","Zomato","Swiggy",
-             "Eazy Dinner","Party","VIP"]
-        )
-        pax = st.number_input("PAX", min_value=1, step=1)
+        name=st.text_input("Guest Name")
+        mobile=st.text_input("Mobile")
+        category=st.selectbox("Category",
+                              ["Walk-In","Zomato",
+                               "Swiggy","VIP","Party"])
+        pax=st.number_input("PAX",min_value=1,step=1)
 
-        submit = st.form_submit_button("Add Guest")
+        submit=st.form_submit_button("Add Guest")
 
         if submit:
 
-            if name == "" or mobile == "":
-                st.warning("Name & Mobile required")
+            if name=="" or mobile=="":
+                st.warning("Name & Mobile Required")
             else:
 
-                gid = hashlib.md5(
-                    (name+mobile+str(datetime.datetime.now())
+                c.execute("SELECT * FROM guests WHERE mobile=?",(mobile,))
+                repeat=c.fetchone()
+
+                if repeat:
+                    st.warning("⚠ Repeat Guest Detected")
+
+                gid=hashlib.md5(
+                    (name+mobile+
+                     str(datetime.datetime.now())
                      ).encode()).hexdigest()[:8]
 
                 c.execute("INSERT INTO guests VALUES (?,?,?,?,?,?,?,?)",
-                          (gid,name,mobile,category,
-                           user[0],pax,
+                          (gid,name,mobile,category,pax,
+                           user[1],
                            str(datetime.date.today()),0))
                 conn.commit()
 
-                base_url = st.secrets.get("BASE_URL","")
+                base=st.secrets.get("BASE_URL","")
 
-                link = f"{base_url}/?feedback={mobile}"
+                link=f"{base}/?feedback={mobile}"
 
                 st.success("Guest Added")
 
-                if base_url != "":
-                    st.markdown(f"""
-                    📲 **Send WhatsApp Link**  
-                    [Click to Send](https://wa.me/{mobile}?text=Thank%20you%20for%20visiting%20Carnivale!%20Please%20share%20feedback:%20{link})
-                    """)
+                if base!="":
+                    st.markdown(
+                        f"[Send WhatsApp Feedback](https://wa.me/{mobile}?text=Thank%20you%20for%20visiting!%20Please%20share%20feedback:%20{link})"
+                    )
 
 # ================= DASHBOARD =================
-if menu == "Dashboard" and user[4] == 1:
+if menu=="Dashboard" and user[4]==1:
 
-    st.subheader("Today Guests")
+    st.subheader("Dashboard")
 
-    today = str(datetime.date.today())
+    selected_date=st.date_input("Select Date",
+                                 datetime.date.today())
 
-    c.execute("SELECT * FROM guests WHERE date=?",(today,))
-    rows = c.fetchall()
+    c.execute("SELECT * FROM guests WHERE date=?",
+              (str(selected_date),))
+    rows=c.fetchall()
 
-    st.write("Total Guests Today:", len(rows))
+    st.write("Total Guests:",len(rows))
 
     for r in rows:
         st.write(
-            r[1],
-            "|",
-            r[2],
-            "|",
-            r[3],
-            "| PAX:", r[5],
+            r[1],"|",r[2],
+            "|",r[3],
+            "| PAX:",r[4],
+            "| Added By:",r[5],
             "| Feedback:",
             "Done" if r[7]==1 else "Pending"
         )
 
 # ================= MANAGE STAFF =================
-if menu == "Manage Staff" and user[1] == "admin":
+if menu=="Manage Staff" and user[1]=="admin":
 
     st.subheader("Create Staff")
 
-    new_user = st.text_input("Staff Username")
-    new_pass = st.text_input("Staff Password")
-    can_add = st.checkbox("Can Add Guest")
-    can_view = st.checkbox("Can View Dashboard")
+    new_user=st.text_input("Username")
+    new_pass=st.text_input("Password")
+    can_add=st.checkbox("Can Add Guest")
+    can_view=st.checkbox("Can View Dashboard")
 
-    if st.button("Create Staff"):
-
-        if new_user == "" or new_pass == "":
-            st.warning("Enter details")
-        else:
-            hashed = hashlib.md5(new_pass.encode()).hexdigest()
-
-            c.execute("INSERT INTO users VALUES (?,?,?,?,?)",
-                      (hashlib.md5(new_user.encode()).hexdigest()[:6],
-                       new_user,
-                       hashed,
-                       1 if can_add else 0,
-                       1 if can_view else 0))
-            conn.commit()
-
-            st.success("Staff Created")
+    if st.button("Create"):
+        hashed=hashlib.md5(new_pass.encode()).hexdigest()
+        uid=hashlib.md5(new_user.encode()).hexdigest()[:6]
+        c.execute("INSERT INTO users VALUES (?,?,?,?,?)",
+                  (uid,new_user,hashed,
+                   1 if can_add else 0,
+                   1 if can_view else 0))
+        conn.commit()
+        st.success("Staff Created")
 
     st.divider()
-    st.subheader("Existing Staff")
+    st.subheader("Delete Staff")
 
     c.execute("SELECT username FROM users WHERE username!='admin'")
-    staff = c.fetchall()
+    staff=[s[0] for s in c.fetchall()]
 
-    for s in staff:
-        st.write(s[0])
+    del_user=st.selectbox("Select Staff",staff)
+
+    if st.button("Delete Staff"):
+        c.execute("DELETE FROM users WHERE username=?",(del_user,))
+        conn.commit()
+        st.success("Deleted")
