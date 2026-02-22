@@ -10,7 +10,56 @@ st.set_page_config(page_title="Enterprise CRM", layout="wide")
 DATA_FILE = "guest_data.csv"
 FEEDBACK_FILE = "feedback_data.csv"
 
-# ================= LOGIN =================
+# ================== FEEDBACK DIRECT ACCESS ==================
+query_params = st.query_params
+
+if "feedback" in query_params:
+
+    guest_mobile = query_params["feedback"]
+
+    st.title("⭐ Guest Feedback Form")
+
+    if os.path.exists(FEEDBACK_FILE):
+        feedback_df = pd.read_csv(FEEDBACK_FILE)
+    else:
+        feedback_df = pd.DataFrame(columns=[
+            "guest_mobile","rating","comment","date"
+        ])
+
+    # Prevent duplicate feedback
+    if guest_mobile in feedback_df["guest_mobile"].values:
+        st.success("✅ Feedback already submitted. Thank you ❤️")
+        st.stop()
+
+    rating = st.radio(
+        "Rate Your Experience",
+        ["⭐","⭐⭐","⭐⭐⭐","⭐⭐⭐⭐","⭐⭐⭐⭐⭐"]
+    )
+
+    comment = st.text_area("Write Your Feedback")
+
+    if st.button("Submit Feedback"):
+
+        new_feedback = {
+            "guest_mobile": guest_mobile,
+            "rating": len(rating),
+            "comment": comment,
+            "date": datetime.date.today()
+        }
+
+        feedback_df = pd.concat(
+            [feedback_df, pd.DataFrame([new_feedback])]
+        )
+
+        feedback_df.to_csv(FEEDBACK_FILE, index=False)
+
+        st.success("🎉 Thank You For Your Valuable Feedback ❤️")
+        st.balloons()
+        st.stop()
+
+    st.stop()
+
+# ================= LOGIN SYSTEM =================
 users = {
     "admin": {"password": "admin123", "role": "admin"},
     "staff1": {"password": "staff123", "role": "staff"},
@@ -21,6 +70,7 @@ if "logged_in" not in st.session_state:
 
 if not st.session_state.logged_in:
     st.title("🔐 Secure Login")
+
     username = st.text_input("Username")
     password = st.text_input("Password", type="password")
 
@@ -40,8 +90,8 @@ if os.path.exists(DATA_FILE):
     df = pd.read_csv(DATA_FILE)
 else:
     df = pd.DataFrame(columns=[
-        "id","name","mobile","category","pax",
-        "date","created_by","edit_count"
+        "id","name","mobile","category",
+        "pax","date","created_by","edit_count"
     ])
 
 if os.path.exists(FEEDBACK_FILE):
@@ -53,7 +103,9 @@ else:
 
 # ================= SIDEBAR =================
 st.sidebar.title("CRM Panel")
-menu = st.sidebar.radio("Navigation",
+
+menu = st.sidebar.radio(
+    "Navigation",
     ["Guest Entry","Dashboard","Admin Panel"]
 )
 
@@ -100,22 +152,23 @@ if menu == "Guest Entry":
         df = pd.concat([df, pd.DataFrame([new_data])])
         df.to_csv(DATA_FILE,index=False)
 
-        st.success("Guest Added")
+        st.success("Guest Added Successfully")
 
         feedback_link = f"https://rjraunakapp.streamlit.app/?feedback={mobile}"
         whatsapp_url = f"https://wa.me/{mobile}?text=Please%20give%20feedback:%20{feedback_link}"
+
         st.markdown(f"[📲 Send Feedback on WhatsApp]({whatsapp_url})")
 
-    # ================= STAFF EDIT (ONLY ONCE) =================
-    st.subheader("Edit Guest (Only Once)")
+    # ===== Staff Edit (Only Once) =====
+    st.subheader("Edit Guest (Only 1 Time Allowed)")
 
-    edit_id = st.text_input("Enter Guest ID to Edit")
+    edit_id = st.text_input("Enter Guest ID")
 
     if edit_id in df["id"].values:
         row = df.index[df["id"]==edit_id][0]
 
         if df.at[row,"edit_count"] >= 1:
-            st.error("Edit limit reached (Only 1 time allowed)")
+            st.error("Edit limit reached")
         else:
             new_name = st.text_input("New Name", df.at[row,"name"])
             new_mobile = st.text_input("New Mobile", df.at[row,"mobile"])
@@ -127,9 +180,7 @@ if menu == "Guest Entry":
                 df.to_csv(DATA_FILE,index=False)
                 st.success("Updated Successfully")
 
-    # ================= STAFF EXCEL EXPORT =================
-    st.subheader("Download Your Entries")
-
+    # ===== Staff Excel =====
     staff_data = df[df["created_by"]==st.session_state.username]
 
     buffer = io.BytesIO()
@@ -139,7 +190,7 @@ if menu == "Guest Entry":
     st.download_button(
         "Download My Excel",
         data=buffer,
-        file_name="staff_data.xlsx",
+        file_name="my_entries.xlsx",
         mime="application/vnd.ms-excel"
     )
 
@@ -158,11 +209,12 @@ elif menu == "Dashboard":
     col2.metric("Today Guests", len(today_df))
     col3.metric("Total PAX", df["pax"].sum())
 
-    filter_cat = st.selectbox("Filter Category",
-        ["All"]+list(df["category"].unique())
+    filter_cat = st.selectbox(
+        "Filter by Category",
+        ["All"] + list(df["category"].unique())
     )
 
-    if filter_cat!="All":
+    if filter_cat != "All":
         show_df = df[df["category"]==filter_cat]
     else:
         show_df = df
@@ -174,8 +226,8 @@ elif menu == "Dashboard":
 # ==========================================================
 elif menu == "Admin Panel":
 
-    if st.session_state.role!="admin":
-        st.error("Admin Only Access")
+    if st.session_state.role != "admin":
+        st.error("Admin Access Only")
         st.stop()
 
     st.title("🛠 Admin Panel")
@@ -196,3 +248,7 @@ elif menu == "Admin Panel":
 
     st.subheader("Feedback Data")
     st.dataframe(feedback_df)
+
+    if not feedback_df.empty:
+        avg_rating = feedback_df["rating"].mean()
+        st.metric("Average Rating", round(avg_rating,2))
