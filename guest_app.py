@@ -71,7 +71,7 @@ if menu == "Staff Entry":
             st.success("Entry Saved Successfully ✅")
             st.balloons()
 
-            feedback_link = f"http://localhost:8501/?mobile={mobile}&feedback=1"
+           feedback_link = f"https://raunak-app.streamlit.app/?mobile={mobile}&feedback=1"
 
             whatsapp_url = f"https://wa.me/91{mobile}?text=Thank%20you%20for%20visiting%20us!%20Please%20share%20your%20feedback:%20{feedback_link}"
 
@@ -135,3 +135,4 @@ elif menu == "Dashboard":
     col3.metric("Swiggy Orders", len(df[df["Category"]=="Swiggy"]))
 
     st.dataframe(df) 
+
