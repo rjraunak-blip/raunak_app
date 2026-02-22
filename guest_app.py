@@ -2,9 +2,9 @@ import streamlit as st
 import pandas as pd
 import datetime
 
-st.set_page_config(page_title="Restaurant CRM", layout="wide")
+st.set_page_config(page_title="Restaurant Intelligence CRM", layout="wide")
 
-# ---------- Custom CSS ----------
+# ------------------ CUSTOM CSS ------------------
 st.markdown("""
 <style>
 body {
@@ -24,13 +24,14 @@ body {
 </style>
 """, unsafe_allow_html=True)
 
-# ---------- Database ----------
+# ------------------ SESSION DATABASE ------------------
 if "data" not in st.session_state:
     st.session_state.data = pd.DataFrame(
-        columns=["Name","Mobile","Category","Time","Behaviour","Food","Service","Quality","Comment"]
+        columns=["Name","Mobile","Category","Time",
+                 "Behaviour","Food","Service","Quality","Comment"]
     )
 
-# ---------- Sidebar ----------
+# ------------------ SIDEBAR ------------------
 menu = st.sidebar.radio("Menu", ["Staff Entry","Feedback Form","Dashboard"])
 
 # =====================================================
@@ -51,6 +52,7 @@ if menu == "Staff Entry":
     if st.button("Save Entry"):
 
         if name and mobile:
+
             new_row = {
                 "Name": name,
                 "Mobile": mobile,
@@ -71,12 +73,13 @@ if menu == "Staff Entry":
             st.success("Entry Saved Successfully ✅")
             st.balloons()
 
-           feedback_link = f"https://raunak-app.streamlit.app/?mobile={mobile}&feedback=1"
+            # ✅ LIVE FEEDBACK LINK (IMPORTANT FIXED)
+            feedback_link = f"https://raunak-app.streamlit.app/?mobile={mobile}&feedback=1"
 
             whatsapp_url = f"https://wa.me/91{mobile}?text=Thank%20you%20for%20visiting%20us!%20Please%20share%20your%20feedback:%20{feedback_link}"
 
-            st.markdown(f"### 📲 Send Feedback")
-            st.markdown(f"[Click Here to Send WhatsApp]({whatsapp_url})")
+            st.markdown("### 📲 Send Feedback to Guest")
+            st.markdown(f"[Click Here to Open WhatsApp]({whatsapp_url})")
 
         else:
             st.error("Please fill all fields")
@@ -94,7 +97,7 @@ elif menu == "Feedback Form":
 
         if mobile in st.session_state.data["Mobile"].values:
 
-            st.subheader("Rate Us ⭐")
+            st.subheader("Rate Your Experience ⭐")
 
             behaviour = st.slider("Behaviour",1,5)
             food = st.slider("Food",1,5)
@@ -134,5 +137,6 @@ elif menu == "Dashboard":
     col2.metric("Zomato Orders", len(df[df["Category"]=="Zomato"]))
     col3.metric("Swiggy Orders", len(df[df["Category"]=="Swiggy"]))
 
-    st.dataframe(df) 
+    st.divider()
 
+    st.dataframe(df)
