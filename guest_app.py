@@ -5,44 +5,67 @@ import hashlib
 import datetime
 import io
 
-st.set_page_config(page_title="Enterprise CRM", layout="wide")
+st.set_page_config(page_title="CARNIVLE CRM", layout="wide")
 
 DATA_FILE = "guest_data.csv"
 FEEDBACK_FILE = "feedback_data.csv"
 
-# ================== FEEDBACK DIRECT ACCESS ==================
+# ================== FEEDBACK DIRECT PAGE ==================
 query_params = st.query_params
 
 if "feedback" in query_params:
 
     guest_mobile = query_params["feedback"]
 
-    st.title("⭐ Guest Feedback Form")
+    st.markdown("""
+        <h1 style='text-align:center;color:#E63946;'>
+        🍽 CARNIVLE
+        </h1>
+        <h3 style='text-align:center;'>
+        We Value Your Experience
+        </h3>
+        <hr>
+    """, unsafe_allow_html=True)
 
     if os.path.exists(FEEDBACK_FILE):
         feedback_df = pd.read_csv(FEEDBACK_FILE)
     else:
         feedback_df = pd.DataFrame(columns=[
-            "guest_mobile","rating","comment","date"
+            "guest_mobile","overall","staff",
+            "food","service","comment","date"
         ])
 
     # Prevent duplicate feedback
     if guest_mobile in feedback_df["guest_mobile"].values:
-        st.success("✅ Feedback already submitted. Thank you ❤️")
+        st.success("✅ Feedback already submitted. Thank You ❤️")
         st.stop()
 
-    rating = st.radio(
-        "Rate Your Experience",
-        ["⭐","⭐⭐","⭐⭐⭐","⭐⭐⭐⭐","⭐⭐⭐⭐⭐"]
-    )
+    st.subheader("⭐ Overall Experience")
+    overall = st.slider("",1,5,4)
 
-    comment = st.text_area("Write Your Feedback")
+    col1,col2 = st.columns(2)
+
+    with col1:
+        st.subheader("👨‍🍳 Staff Behaviour")
+        staff = st.slider(" ",1,5,4)
+
+        st.subheader("🍽 Food Quality")
+        food = st.slider("  ",1,5,4)
+
+    with col2:
+        st.subheader("🛎 Service Quality")
+        service = st.slider("   ",1,5,4)
+
+    comment = st.text_area("💬 Additional Comments")
 
     if st.button("Submit Feedback"):
 
         new_feedback = {
             "guest_mobile": guest_mobile,
-            "rating": len(rating),
+            "overall": overall,
+            "staff": staff,
+            "food": food,
+            "service": service,
             "comment": comment,
             "date": datetime.date.today()
         }
@@ -53,8 +76,14 @@ if "feedback" in query_params:
 
         feedback_df.to_csv(FEEDBACK_FILE, index=False)
 
-        st.success("🎉 Thank You For Your Valuable Feedback ❤️")
+        st.markdown("""
+            <h2 style='text-align:center;color:green;'>
+            🎉 Thank You For Visiting CARNIVLE!
+            </h2>
+        """, unsafe_allow_html=True)
+
         st.balloons()
+        st.snow()
         st.stop()
 
     st.stop()
@@ -69,7 +98,14 @@ if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
 
 if not st.session_state.logged_in:
-    st.title("🔐 Secure Login")
+
+    st.markdown("""
+        <h1 style='text-align:center;color:#E63946;'>
+        🍽 CARNIVLE
+        </h1>
+        <h3 style='text-align:center;'>CRM & Guest Management System</h3>
+        <hr>
+    """, unsafe_allow_html=True)
 
     username = st.text_input("Username")
     password = st.text_input("Password", type="password")
@@ -98,11 +134,12 @@ if os.path.exists(FEEDBACK_FILE):
     feedback_df = pd.read_csv(FEEDBACK_FILE)
 else:
     feedback_df = pd.DataFrame(columns=[
-        "guest_mobile","rating","comment","date"
+        "guest_mobile","overall","staff",
+        "food","service","comment","date"
     ])
 
 # ================= SIDEBAR =================
-st.sidebar.title("CRM Panel")
+st.sidebar.title("🍽 CARNIVLE CRM")
 
 menu = st.sidebar.radio(
     "Navigation",
@@ -155,12 +192,12 @@ if menu == "Guest Entry":
         st.success("Guest Added Successfully")
 
         feedback_link = f"https://rjraunakapp.streamlit.app/?feedback={mobile}"
-        whatsapp_url = f"https://wa.me/{mobile}?text=Please%20give%20feedback:%20{feedback_link}"
+        whatsapp_url = f"https://wa.me/{mobile}?text=Thank you for visiting CARNIVLE. Please share feedback: {feedback_link}"
 
-        st.markdown(f"[📲 Send Feedback on WhatsApp]({whatsapp_url})")
+        st.markdown(f"[📲 Send Feedback Link]({whatsapp_url})")
 
-    # ===== Staff Edit (Only Once) =====
-    st.subheader("Edit Guest (Only 1 Time Allowed)")
+    # Staff Edit (1 time)
+    st.subheader("Edit Guest (Only 1 Time)")
 
     edit_id = st.text_input("Enter Guest ID")
 
@@ -180,7 +217,7 @@ if menu == "Guest Entry":
                 df.to_csv(DATA_FILE,index=False)
                 st.success("Updated Successfully")
 
-    # ===== Staff Excel =====
+    # Staff Excel
     staff_data = df[df["created_by"]==st.session_state.username]
 
     buffer = io.BytesIO()
@@ -199,7 +236,7 @@ if menu == "Guest Entry":
 # ==========================================================
 elif menu == "Dashboard":
 
-    st.title("📊 Dashboard")
+    st.title("📊 CARNIVLE Dashboard")
 
     today = str(datetime.date.today())
     today_df = df[df["date"]==today]
@@ -230,7 +267,7 @@ elif menu == "Admin Panel":
         st.error("Admin Access Only")
         st.stop()
 
-    st.title("🛠 Admin Panel")
+    st.title("🛠 CARNIVLE Admin Panel")
 
     st.subheader("All Guest Data")
     st.dataframe(df)
@@ -250,5 +287,10 @@ elif menu == "Admin Panel":
     st.dataframe(feedback_df)
 
     if not feedback_df.empty:
-        avg_rating = feedback_df["rating"].mean()
-        st.metric("Average Rating", round(avg_rating,2))
+        st.subheader("📊 Feedback Analytics")
+
+        col1,col2,col3,col4 = st.columns(4)
+        col1.metric("Overall Avg", round(feedback_df["overall"].mean(),2))
+        col2.metric("Staff Avg", round(feedback_df["staff"].mean(),2))
+        col3.metric("Food Avg", round(feedback_df["food"].mean(),2))
+        col4.metric("Service Avg", round(feedback_df["service"].mean(),2))
