@@ -1,183 +1,137 @@
 import streamlit as st
-import sqlite3
 import pandas as pd
-from datetime import datetime
+import datetime
 
-# ---------------- PAGE CONFIG ----------------
-st.set_page_config(
-    page_title="Restaurant Intelligence CRM",
-    page_icon="🍽️",
-    layout="wide"
-)
+st.set_page_config(page_title="Restaurant CRM", layout="wide")
 
-# ---------------- PREMIUM CSS ----------------
+# ---------- Custom CSS ----------
 st.markdown("""
 <style>
-.main {
-    background-color: #0e1117;
+body {
+    background-color: #0E1117;
 }
-h1, h2, h3, h4 {
-    color: white;
+.big-title {
+    font-size:30px;
+    font-weight:bold;
+    color:white;
 }
-.stMetric {
-    background-color: #1c1f26;
-    padding: 15px;
-    border-radius: 12px;
-}
-.block-container {
-    padding-top: 2rem;
+.card {
+    padding:20px;
+    border-radius:15px;
+    background-color:#1c1f26;
+    box-shadow: 0px 4px 10px rgba(0,0,0,0.3);
 }
 </style>
 """, unsafe_allow_html=True)
 
-# ---------------- DATABASE ----------------
-conn = sqlite3.connect("restaurant.db", check_same_thread=False)
-c = conn.cursor()
+# ---------- Database ----------
+if "data" not in st.session_state:
+    st.session_state.data = pd.DataFrame(
+        columns=["Name","Mobile","Category","Time","Behaviour","Food","Service","Quality","Comment"]
+    )
 
-c.execute("""
-CREATE TABLE IF NOT EXISTS visits(
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT,
-    mobile TEXT,
-    guest_count INTEGER,
-    category TEXT,
-    food_rating INTEGER,
-    service_rating INTEGER,
-    behaviour_rating INTEGER,
-    date TEXT
-)
-""")
-conn.commit()
+# ---------- Sidebar ----------
+menu = st.sidebar.radio("Menu", ["Staff Entry","Feedback Form","Dashboard"])
 
-# ---------------- SESSION ----------------
-if "logged_in" not in st.session_state:
-    st.session_state.logged_in = False
+# =====================================================
+# 1️⃣ STAFF ENTRY
+# =====================================================
+if menu == "Staff Entry":
 
-# ---------------- LOGIN ----------------
-def login():
-    st.markdown("<h1 style='text-align:center;'>🍽️ Restaurant Intelligence CRM</h1>", unsafe_allow_html=True)
-    st.subheader("Login To Continue")
-
-    role = st.selectbox("Login As", ["Admin", "Staff"])
-    password = st.text_input("Password", type="password")
-
-    if st.button("Login"):
-        if role == "Admin" and password == "admin123":
-            st.session_state.logged_in = True
-            st.session_state.role = "Admin"
-            st.rerun()
-        elif role == "Staff" and password == "staff123":
-            st.session_state.logged_in = True
-            st.session_state.role = "Staff"
-            st.rerun()
-        else:
-            st.error("Wrong Credentials")
-
-# ---------------- STAFF PANEL ----------------
-def staff_panel():
-    st.title("📝 Guest Entry Panel")
+    st.markdown("<div class='big-title'>Staff Entry Panel</div>", unsafe_allow_html=True)
 
     name = st.text_input("Guest Name")
     mobile = st.text_input("Mobile Number")
-    guest_count = st.number_input("Number of Guests", 1, 20)
-    category = st.selectbox("Category", ["Dine-In", "Delivery", "Takeaway"])
 
-    food = st.slider("Food Rating", 1, 5)
-    service = st.slider("Service Rating", 1, 5)
-    behaviour = st.slider("Behaviour Rating", 1, 5)
+    category = st.selectbox(
+        "Order Source",
+        ["Zomato", "Swiggy", "Easy Dinner", "Walk-In", "Party"]
+    )
 
     if st.button("Save Entry"):
-        c.execute("""
-        INSERT INTO visits(name, mobile, guest_count, category,
-        food_rating, service_rating, behaviour_rating, date)
-        VALUES (?,?,?,?,?,?,?,?)
-        """, (name, mobile, guest_count, category,
-              food, service, behaviour,
-              datetime.now().strftime("%Y-%m-%d")))
-        conn.commit()
 
-        st.success("Entry Saved Successfully ✅")
-        st.balloons()
+        if name and mobile:
+            new_row = {
+                "Name": name,
+                "Mobile": mobile,
+                "Category": category,
+                "Time": datetime.datetime.now(),
+                "Behaviour": "",
+                "Food": "",
+                "Service": "",
+                "Quality": "",
+                "Comment": ""
+            }
 
-    if st.button("Logout"):
-        st.session_state.logged_in=False
-        st.rerun()
+            st.session_state.data = pd.concat(
+                [st.session_state.data, pd.DataFrame([new_row])],
+                ignore_index=True
+            )
 
-# ---------------- ADMIN PANEL ----------------
-def admin_panel():
+            st.success("Entry Saved Successfully ✅")
+            st.balloons()
 
-    st.title("📊 Restaurant Intelligence Dashboard")
+            feedback_link = f"http://localhost:8501/?mobile={mobile}&feedback=1"
 
-    if st.button("Logout"):
-        st.session_state.logged_in=False
-        st.rerun()
+            whatsapp_url = f"https://wa.me/91{mobile}?text=Thank%20you%20for%20visiting%20us!%20Please%20share%20your%20feedback:%20{feedback_link}"
 
-    df = pd.read_sql_query("SELECT * FROM visits", conn)
+            st.markdown(f"### 📲 Send Feedback")
+            st.markdown(f"[Click Here to Send WhatsApp]({whatsapp_url})")
 
-    if df.empty:
-        st.warning("No Data Available")
-        return
+        else:
+            st.error("Please fill all fields")
 
-    total_guests = df["guest_count"].sum()
-    total_visits = len(df)
+# =====================================================
+# 2️⃣ FEEDBACK FORM
+# =====================================================
+elif menu == "Feedback Form":
 
-    repeat = df.groupby("mobile").size()
-    repeat_customers = repeat[repeat > 1].count()
-    repeat_percent = (repeat_customers / repeat.count()) * 100 if repeat.count() > 0 else 0
+    st.markdown("<div class='big-title'>Guest Feedback</div>", unsafe_allow_html=True)
 
-    df["avg_rating"] = (
-        df["food_rating"] +
-        df["service_rating"] +
-        df["behaviour_rating"]
-    ) / 3
+    mobile = st.text_input("Enter Your Mobile Number")
 
-    avg_rating = df["avg_rating"].mean()
+    if mobile:
 
-    today = datetime.now().strftime("%Y-%m-%d")
-    today_count = df[df["date"] == today]["guest_count"].sum()
-    total_previous = df[df["date"] != today]["guest_count"].sum()
+        if mobile in st.session_state.data["Mobile"].values:
 
-    growth = 0
-    if total_previous > 0:
-        growth = ((today_count - total_previous) / total_previous) * 100
+            st.subheader("Rate Us ⭐")
 
-    col1, col2, col3, col4 = st.columns(4)
+            behaviour = st.slider("Behaviour",1,5)
+            food = st.slider("Food",1,5)
+            service = st.slider("Service",1,5)
+            quality = st.slider("Quality",1,5)
+            comment = st.text_area("Additional Comments")
 
-    col1.metric("Total Guests", total_guests)
-    col2.metric("Repeat %", f"{repeat_percent:.1f}%")
-    col3.metric("Avg Rating ⭐", f"{avg_rating:.2f}")
-    col4.metric("Today Growth %", f"{growth:.1f}%")
+            if st.button("Submit Feedback"):
 
-    st.divider()
+                index = st.session_state.data[
+                    st.session_state.data["Mobile"] == mobile
+                ].index[0]
 
-    st.subheader("📊 Category Distribution")
-    category_data = df.groupby("category")["guest_count"].sum()
-    st.bar_chart(category_data)
+                st.session_state.data.at[index,"Behaviour"] = behaviour
+                st.session_state.data.at[index,"Food"] = food
+                st.session_state.data.at[index,"Service"] = service
+                st.session_state.data.at[index,"Quality"] = quality
+                st.session_state.data.at[index,"Comment"] = comment
 
-    st.divider()
+                st.success("Thank you for your feedback ❤️")
 
-    st.subheader("🏆 VIP Customers (3+ Visits)")
-    vip = repeat[repeat >= 3]
-    st.write(vip)
+        else:
+            st.warning("Mobile number not found")
 
-    st.subheader("⚠ Low Rating Alert")
-    low = df[df["avg_rating"] <= 2.5]
-    st.dataframe(low)
+# =====================================================
+# 3️⃣ DASHBOARD
+# =====================================================
+elif menu == "Dashboard":
 
-    st.subheader("🧠 Smart Insights")
+    st.markdown("<div class='big-title'>Business Dashboard</div>", unsafe_allow_html=True)
 
-    if repeat_percent < 20:
-        st.warning("Customer retention is low. Improve repeat experience.")
-    if avg_rating < 3:
-        st.error("Average rating is low. Service attention required.")
-    if growth > 10:
-        st.success("Strong growth trend detected 🚀")
+    df = st.session_state.data
 
-# ---------------- ROUTER ----------------
-if not st.session_state.logged_in:
-    login()
-else:
-    if st.session_state.role == "Admin":
-        admin_panel()
-    else:
-        staff_panel()
+    col1, col2, col3 = st.columns(3)
+
+    col1.metric("Total Guests", len(df))
+    col2.metric("Zomato Orders", len(df[df["Category"]=="Zomato"]))
+    col3.metric("Swiggy Orders", len(df[df["Category"]=="Swiggy"]))
+
+    st.dataframe(df)
