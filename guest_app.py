@@ -4,139 +4,113 @@ import datetime
 
 st.set_page_config(page_title="Restaurant Intelligence CRM", layout="wide")
 
-# ------------------ CUSTOM CSS ------------------
-st.markdown("""
-<style>
-body {
-    background-color: #0E1117;
-}
-.big-title {
-    font-size:30px;
-    font-weight:bold;
-    color:white;
-}
-.card {
-    padding:20px;
-    border-radius:15px;
-    background-color:#1c1f26;
-    box-shadow: 0px 4px 10px rgba(0,0,0,0.3);
-}
-</style>
-""", unsafe_allow_html=True)
-
-# ------------------ SESSION DATABASE ------------------
+# ---------- SESSION STORAGE ----------
 if "data" not in st.session_state:
-    st.session_state.data = pd.DataFrame(
-        columns=["Name","Mobile","Category","Time",
-                 "Behaviour","Food","Service","Quality","Comment"]
-    )
+    st.session_state.data = []
 
-# ------------------ SIDEBAR ------------------
-menu = st.sidebar.radio("Menu", ["Staff Entry","Feedback Form","Dashboard"])
+# ---------- SIDEBAR ----------
+st.sidebar.title("Menu")
+menu = st.sidebar.radio("", ["Staff Entry", "Feedback Form", "Dashboard"])
 
-# =====================================================
-# 1️⃣ STAFF ENTRY
-# =====================================================
+# =========================================================
+# ================== STAFF ENTRY ==========================
+# =========================================================
+
 if menu == "Staff Entry":
 
-    st.markdown("<div class='big-title'>Staff Entry Panel</div>", unsafe_allow_html=True)
+    st.title("Staff Entry Panel")
 
-    name = st.text_input("Guest Name")
+    guest_name = st.text_input("Guest Name")
     mobile = st.text_input("Mobile Number")
+    guest_count = st.number_input("Number of Guests", min_value=1, step=1)
 
-    category = st.selectbox(
+    order_source = st.selectbox(
         "Order Source",
-        ["Zomato", "Swiggy", "Easy Dinner", "Walk-In", "Party"]
+        ["Zomato", "Swiggy", "Easy Dinner", "Party"]
     )
 
     if st.button("Save Entry"):
 
-        if name and mobile:
+        entry = {
+            "Date": datetime.datetime.now(),
+            "Guest Name": guest_name,
+            "Mobile": mobile,
+            "Guest Count": guest_count,
+            "Order Source": order_source,
+            "Rating": None,
+            "Suggestion": None
+        }
 
-            new_row = {
-                "Name": name,
-                "Mobile": mobile,
-                "Category": category,
-                "Time": datetime.datetime.now(),
-                "Behaviour": "",
-                "Food": "",
-                "Service": "",
-                "Quality": "",
-                "Comment": ""
-            }
+        st.session_state.data.append(entry)
+        st.success("✅ Entry Saved Successfully!")
 
-            st.session_state.data = pd.concat(
-                [st.session_state.data, pd.DataFrame([new_row])],
-                ignore_index=True
-            )
+# =========================================================
+# ================== FEEDBACK FORM ========================
+# =========================================================
 
-            st.success("Entry Saved Successfully ✅")
-            st.balloons()
-
-            # ✅ LIVE FEEDBACK LINK (IMPORTANT FIXED)
-            feedback_link = f"https://raunak-app.streamlit.app/?mobile={mobile}&feedback=1"
-
-            whatsapp_url = f"https://wa.me/91{mobile}?text=Thank%20you%20for%20visiting%20us!%20Please%20share%20your%20feedback:%20{feedback_link}"
-
-            st.markdown("### 📲 Send Feedback to Guest")
-            st.markdown(f"[Click Here to Open WhatsApp]({whatsapp_url})")
-
-        else:
-            st.error("Please fill all fields")
-
-# =====================================================
-# 2️⃣ FEEDBACK FORM
-# =====================================================
 elif menu == "Feedback Form":
 
-    st.markdown("<div class='big-title'>Guest Feedback</div>", unsafe_allow_html=True)
+    st.title("Guest Feedback Form")
 
-    mobile = st.text_input("Enter Your Mobile Number")
+    mobile_search = st.text_input("Enter Mobile Number")
 
-    if mobile:
+    found = None
+    for item in st.session_state.data:
+        if item["Mobile"] == mobile_search:
+            found = item
+            break
 
-        if mobile in st.session_state.data["Mobile"].values:
+    if found:
 
-            st.subheader("Rate Your Experience ⭐")
+        rating = st.slider("Rate Your Experience ⭐", 1, 5)
+        suggestion = st.text_area("Any Suggestions?")
 
-            behaviour = st.slider("Behaviour",1,5)
-            food = st.slider("Food",1,5)
-            service = st.slider("Service",1,5)
-            quality = st.slider("Quality",1,5)
-            comment = st.text_area("Additional Comments")
+        if st.button("Submit Feedback"):
+            found["Rating"] = rating
+            found["Suggestion"] = suggestion
+            st.success("🎉 Thank you for your feedback!")
 
-            if st.button("Submit Feedback"):
+    else:
+        if mobile_search != "":
+            st.warning("No entry found for this number.")
 
-                index = st.session_state.data[
-                    st.session_state.data["Mobile"] == mobile
-                ].index[0]
+# =========================================================
+# ================== DASHBOARD ============================
+# =========================================================
 
-                st.session_state.data.at[index,"Behaviour"] = behaviour
-                st.session_state.data.at[index,"Food"] = food
-                st.session_state.data.at[index,"Service"] = service
-                st.session_state.data.at[index,"Quality"] = quality
-                st.session_state.data.at[index,"Comment"] = comment
-
-                st.success("Thank you for your feedback ❤️")
-
-        else:
-            st.warning("Mobile number not found")
-
-# =====================================================
-# 3️⃣ DASHBOARD
-# =====================================================
 elif menu == "Dashboard":
 
-    st.markdown("<div class='big-title'>Business Dashboard</div>", unsafe_allow_html=True)
+    st.title("Admin Dashboard")
 
-    df = st.session_state.data
+    if len(st.session_state.data) == 0:
+        st.info("No data available yet.")
+    else:
 
-    col1, col2, col3 = st.columns(3)
+        df = pd.DataFrame(st.session_state.data)
 
-    col1.metric("Total Guests", len(df))
-    col2.metric("Zomato Orders", len(df[df["Category"]=="Zomato"]))
-    col3.metric("Swiggy Orders", len(df[df["Category"]=="Swiggy"]))
+        total_guests = df["Guest Count"].sum()
+        total_entries = len(df)
 
-    st.divider()
+        avg_rating = df["Rating"].dropna().mean()
+        if pd.isna(avg_rating):
+            avg_rating = 0
 
-    st.dataframe(df)
+        col1, col2, col3 = st.columns(3)
+
+        col1.metric("Total Entries", total_entries)
+        col2.metric("Total Guests Served", total_guests)
+        col3.metric("Average Rating ⭐", round(avg_rating, 2))
+
+        # Low Rating Alert
+        low_ratings = df[df["Rating"] <= 2]
+
+        if not low_ratings.empty:
+            st.error("⚠ Low Rating Alert! Immediate Action Required")
+
+        st.subheader("All Entries")
+        st.dataframe(df)
+
+        # Order Source Analysis
+        st.subheader("Order Source Distribution")
+        source_count = df["Order Source"].value_counts()
+        st.bar_chart(source_count)
