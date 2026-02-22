@@ -1,296 +1,260 @@
 import streamlit as st
-import pandas as pd
-import os
+import sqlite3
 import hashlib
 import datetime
-import io
+import pandas as pd
+import qrcode
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table
+from reportlab.lib.styles import ParagraphStyle
+from reportlab.lib import colors
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.units import inch
+from reportlab.platypus import TableStyle
+import os
 
-st.set_page_config(page_title="CARNIVLE CRM", layout="wide")
+st.set_page_config(page_title="CARNIVLE Enterprise Pro", layout="wide")
 
-DATA_FILE = "guest_data.csv"
-FEEDBACK_FILE = "feedback_data.csv"
+DB="carnivle_pro.db"
+conn=sqlite3.connect(DB,check_same_thread=False)
+c=conn.cursor()
 
-# ================== FEEDBACK DIRECT PAGE ==================
-query_params = st.query_params
+# ================= DATABASE =================
+c.execute("""CREATE TABLE IF NOT EXISTS users(
+username TEXT PRIMARY KEY,
+password TEXT,
+role TEXT,
+branch TEXT,
+can_add_guest INTEGER,
+can_view_all INTEGER,
+can_download INTEGER
+)""")
 
-if "feedback" in query_params:
+c.execute("""CREATE TABLE IF NOT EXISTS branches(
+branch_name TEXT PRIMARY KEY
+)""")
 
-    guest_mobile = query_params["feedback"]
+c.execute("""CREATE TABLE IF NOT EXISTS guests(
+id TEXT PRIMARY KEY,
+name TEXT,
+mobile TEXT,
+branch TEXT,
+created_by TEXT,
+pax INTEGER,
+date TEXT
+)""")
 
+c.execute("""CREATE TABLE IF NOT EXISTS feedback(
+mobile TEXT,
+branch TEXT,
+overall INTEGER,
+staff INTEGER,
+food INTEGER,
+service INTEGER,
+comment TEXT,
+date TEXT
+)""")
+
+conn.commit()
+
+# ================= UTIL =================
+def hash_pass(p):
+    return hashlib.sha256(p.encode()).hexdigest()
+
+def generate_id(name,mobile):
+    return hashlib.md5((name+mobile+str(datetime.datetime.now())).encode()).hexdigest()[:8]
+
+# Default Admin
+c.execute("SELECT * FROM users WHERE username='admin'")
+if not c.fetchone():
+    c.execute("INSERT INTO users VALUES (?,?,?,?,?,?,?)",
+              ("admin",hash_pass("admin123"),"admin",
+               "Head Office",1,1,1))
+    conn.commit()
+
+# ================= THEME =================
+if "dark" not in st.session_state:
+    st.session_state.dark=False
+
+if st.sidebar.button("🌗 Toggle Dark Mode"):
+    st.session_state.dark=not st.session_state.dark
+
+if st.session_state.dark:
     st.markdown("""
-        <h1 style='text-align:center;color:#E63946;'>
-        🍽 CARNIVLE
-        </h1>
-        <h3 style='text-align:center;'>
-        We Value Your Experience
-        </h3>
-        <hr>
-    """, unsafe_allow_html=True)
+        <style>
+        body {background-color:#111;color:white;}
+        </style>
+    """,unsafe_allow_html=True)
 
-    if os.path.exists(FEEDBACK_FILE):
-        feedback_df = pd.read_csv(FEEDBACK_FILE)
-    else:
-        feedback_df = pd.DataFrame(columns=[
-            "guest_mobile","overall","staff",
-            "food","service","comment","date"
-        ])
+# ================= LOGIN =================
+if "login" not in st.session_state:
+    st.session_state.login=False
 
-    # Prevent duplicate feedback
-    if guest_mobile in feedback_df["guest_mobile"].values:
-        st.success("✅ Feedback already submitted. Thank You ❤️")
-        st.stop()
+if not st.session_state.login:
 
-    st.subheader("⭐ Overall Experience")
-    overall = st.slider("",1,5,4)
-
-    col1,col2 = st.columns(2)
-
-    with col1:
-        st.subheader("👨‍🍳 Staff Behaviour")
-        staff = st.slider(" ",1,5,4)
-
-        st.subheader("🍽 Food Quality")
-        food = st.slider("  ",1,5,4)
-
-    with col2:
-        st.subheader("🛎 Service Quality")
-        service = st.slider("   ",1,5,4)
-
-    comment = st.text_area("💬 Additional Comments")
-
-    if st.button("Submit Feedback"):
-
-        new_feedback = {
-            "guest_mobile": guest_mobile,
-            "overall": overall,
-            "staff": staff,
-            "food": food,
-            "service": service,
-            "comment": comment,
-            "date": datetime.date.today()
-        }
-
-        feedback_df = pd.concat(
-            [feedback_df, pd.DataFrame([new_feedback])]
-        )
-
-        feedback_df.to_csv(FEEDBACK_FILE, index=False)
-
-        st.markdown("""
-            <h2 style='text-align:center;color:green;'>
-            🎉 Thank You For Visiting CARNIVLE!
-            </h2>
-        """, unsafe_allow_html=True)
-
-        st.balloons()
-        st.snow()
-        st.stop()
-
-    st.stop()
-
-# ================= LOGIN SYSTEM =================
-users = {
-    "admin": {"password": "admin123", "role": "admin"},
-    "staff1": {"password": "staff123", "role": "staff"},
-}
-
-if "logged_in" not in st.session_state:
-    st.session_state.logged_in = False
-
-if not st.session_state.logged_in:
-
-    st.markdown("""
-        <h1 style='text-align:center;color:#E63946;'>
-        🍽 CARNIVLE
-        </h1>
-        <h3 style='text-align:center;'>CRM & Guest Management System</h3>
-        <hr>
-    """, unsafe_allow_html=True)
-
-    username = st.text_input("Username")
-    password = st.text_input("Password", type="password")
+    st.title("🍽 CARNIVLE Enterprise Pro")
+    u=st.text_input("Username")
+    p=st.text_input("Password",type="password")
 
     if st.button("Login"):
-        if username in users and password == users[username]["password"]:
-            st.session_state.logged_in = True
-            st.session_state.username = username
-            st.session_state.role = users[username]["role"]
+        c.execute("SELECT * FROM users WHERE username=?",(u,))
+        data=c.fetchone()
+        if data and data[1]==hash_pass(p):
+            st.session_state.login=True
+            st.session_state.user=data
             st.rerun()
         else:
             st.error("Invalid Login")
-
     st.stop()
 
-# ================= LOAD DATA =================
-if os.path.exists(DATA_FILE):
-    df = pd.read_csv(DATA_FILE)
-else:
-    df = pd.DataFrame(columns=[
-        "id","name","mobile","category",
-        "pax","date","created_by","edit_count"
-    ])
+user=st.session_state.user
 
-if os.path.exists(FEEDBACK_FILE):
-    feedback_df = pd.read_csv(FEEDBACK_FILE)
-else:
-    feedback_df = pd.DataFrame(columns=[
-        "guest_mobile","overall","staff",
-        "food","service","comment","date"
-    ])
+st.sidebar.write(f"User: {user[0]}")
+st.sidebar.write(f"Role: {user[2]}")
+st.sidebar.write(f"Branch: {user[3]}")
 
-# ================= SIDEBAR =================
-st.sidebar.title("🍽 CARNIVLE CRM")
-
-menu = st.sidebar.radio(
-    "Navigation",
-    ["Guest Entry","Dashboard","Admin Panel"]
-)
-
-st.sidebar.write(f"Logged in as: {st.session_state.username}")
+menu=st.sidebar.radio("Menu",
+["Dashboard","Guest Entry","Leaderboard",
+ "QR Generator","Reports","Admin Panel"])
 
 if st.sidebar.button("Logout"):
-    st.session_state.logged_in = False
+    st.session_state.login=False
     st.rerun()
 
-# ==========================================================
-# ================= GUEST ENTRY ============================
-# ==========================================================
-if menu == "Guest Entry":
+# ================= DASHBOARD =================
+if menu=="Dashboard":
 
-    st.title("📝 Guest Entry")
+    df=pd.read_sql_query(
+        "SELECT * FROM guests WHERE branch=?",
+        conn,params=(user[3],))
 
-    name = st.text_input("Guest Name")
-    mobile = st.text_input("Mobile Number")
+    fb=pd.read_sql_query(
+        "SELECT * FROM feedback WHERE branch=?",
+        conn,params=(user[3],))
 
-    category = st.selectbox("Category",[
-        "Walk-In","Swiggy","Zomato","EasyDiner","Party"
-    ])
+    col1,col2,col3=st.columns(3)
 
-    pax = st.number_input("Number of PAX", min_value=1, step=1)
+    col1.metric("Total Guests",len(df))
+    col2.metric("Total PAX",
+                df["pax"].sum() if not df.empty else 0)
+    col3.metric("Avg Rating",
+                round(fb["overall"].mean(),2)
+                if not fb.empty else 0)
 
-    date = st.date_input("Visit Date", datetime.date.today())
+    # Complaint Alert
+    low=fb[fb["overall"]<=2]
+    if not low.empty:
+        st.error("⚠️ Low Rating Alert!")
 
-    if st.button("Submit Entry"):
-        new_id = hashlib.md5(
-            (name + mobile + str(datetime.datetime.now())).encode()
-        ).hexdigest()[:8]
+# ================= GUEST ENTRY =================
+if menu=="Guest Entry" and user[4]==1:
 
-        new_data = {
-            "id": new_id,
-            "name": name,
-            "mobile": mobile,
-            "category": category,
-            "pax": pax,
-            "date": date,
-            "created_by": st.session_state.username,
-            "edit_count": 0
-        }
+    st.subheader("Add Guest")
 
-        df = pd.concat([df, pd.DataFrame([new_data])])
-        df.to_csv(DATA_FILE,index=False)
+    name=st.text_input("Name")
+    mobile=st.text_input("Mobile")
+    pax=st.number_input("PAX",1)
 
-        st.success("Guest Added Successfully")
+    if st.button("Add"):
+        gid=generate_id(name,mobile)
+        c.execute("INSERT INTO guests VALUES (?,?,?,?,?,?,?)",
+                  (gid,name,mobile,user[3],
+                   user[0],pax,str(datetime.date.today())))
+        conn.commit()
+        st.success("Guest Added")
 
-        feedback_link = f"https://rjraunakapp.streamlit.app/?feedback={mobile}"
-        whatsapp_url = f"https://wa.me/{mobile}?text=Thank you for visiting CARNIVLE. Please share feedback: {feedback_link}"
+# ================= LEADERBOARD =================
+if menu=="Leaderboard":
 
-        st.markdown(f"[📲 Send Feedback Link]({whatsapp_url})")
+    df=pd.read_sql_query(
+        "SELECT created_by, COUNT(*) as total FROM guests GROUP BY created_by",
+        conn)
 
-    # Staff Edit (1 time)
-    st.subheader("Edit Guest (Only 1 Time)")
+    st.subheader("🏆 Staff Leaderboard")
+    st.dataframe(df.sort_values("total",ascending=False))
 
-    edit_id = st.text_input("Enter Guest ID")
+# ================= QR =================
+if menu=="QR Generator":
 
-    if edit_id in df["id"].values:
-        row = df.index[df["id"]==edit_id][0]
+    table=st.text_input("Table Number")
 
-        if df.at[row,"edit_count"] >= 1:
-            st.error("Edit limit reached")
-        else:
-            new_name = st.text_input("New Name", df.at[row,"name"])
-            new_mobile = st.text_input("New Mobile", df.at[row,"mobile"])
+    if st.button("Generate QR"):
 
-            if st.button("Update Guest"):
-                df.at[row,"name"] = new_name
-                df.at[row,"mobile"] = new_mobile
-                df.at[row,"edit_count"] += 1
-                df.to_csv(DATA_FILE,index=False)
-                st.success("Updated Successfully")
+        url=f"https://yourapp.streamlit.app/?feedback=table{table}&branch={user[3]}"
 
-    # Staff Excel
-    staff_data = df[df["created_by"]==st.session_state.username]
+        img=qrcode.make(url)
+        img.save("qr.png")
+        st.image("qr.png")
 
-    buffer = io.BytesIO()
-    staff_data.to_excel(buffer,index=False)
-    buffer.seek(0)
+# ================= PDF REPORT =================
+if menu=="Reports":
 
-    st.download_button(
-        "Download My Excel",
-        data=buffer,
-        file_name="my_entries.xlsx",
-        mime="application/vnd.ms-excel"
-    )
+    if st.button("Generate Monthly Report"):
 
-# ==========================================================
-# ================= DASHBOARD ==============================
-# ==========================================================
-elif menu == "Dashboard":
+        doc=SimpleDocTemplate("report.pdf")
+        elements=[]
+        styles=getSampleStyleSheet()
 
-    st.title("📊 CARNIVLE Dashboard")
+        df=pd.read_sql_query(
+            "SELECT * FROM guests WHERE branch=?",
+            conn,params=(user[3],))
 
-    today = str(datetime.date.today())
-    today_df = df[df["date"]==today]
+        elements.append(Paragraph("CARNIVLE Monthly Report",
+                                  styles["Heading1"]))
+        elements.append(Spacer(1,0.5*inch))
 
-    col1,col2,col3 = st.columns(3)
-    col1.metric("Total Guests", len(df))
-    col2.metric("Today Guests", len(today_df))
-    col3.metric("Total PAX", df["pax"].sum())
+        data=[df.columns.tolist()]+df.values.tolist()
+        t=Table(data)
+        t.setStyle(TableStyle([
+            ('BACKGROUND',(0,0),(-1,0),colors.grey),
+            ('GRID',(0,0),(-1,-1),1,colors.black)
+        ]))
 
-    filter_cat = st.selectbox(
-        "Filter by Category",
-        ["All"] + list(df["category"].unique())
-    )
+        elements.append(t)
+        doc.build(elements)
 
-    if filter_cat != "All":
-        show_df = df[df["category"]==filter_cat]
-    else:
-        show_df = df
+        with open("report.pdf","rb") as f:
+            st.download_button("Download Report",f,"report.pdf")
 
-    st.dataframe(show_df)
+# ================= ADMIN =================
+if menu=="Admin Panel" and user[2]=="admin":
 
-# ==========================================================
-# ================= ADMIN PANEL ============================
-# ==========================================================
-elif menu == "Admin Panel":
+    tab1,tab2=st.tabs(["Create Staff","Access Control"])
 
-    if st.session_state.role != "admin":
-        st.error("Admin Access Only")
-        st.stop()
+    with tab1:
+        st.subheader("Add Staff")
 
-    st.title("🛠 CARNIVLE Admin Panel")
+        new_user=st.text_input("Username")
+        new_pass=st.text_input("Password")
+        role=st.selectbox("Role",["staff","manager"])
+        branch=st.text_input("Branch")
 
-    st.subheader("All Guest Data")
-    st.dataframe(df)
+        if st.button("Create Staff"):
+            c.execute("INSERT INTO users VALUES (?,?,?,?,?,?,?)",
+                      (new_user,hash_pass(new_pass),
+                       role,branch,1,0,0))
+            conn.commit()
+            st.success("Created")
 
-    buffer = io.BytesIO()
-    df.to_excel(buffer,index=False)
-    buffer.seek(0)
+    with tab2:
+        st.subheader("Access Control")
 
-    st.download_button(
-        "Download Full Excel",
-        data=buffer,
-        file_name="all_guest_data.xlsx",
-        mime="application/vnd.ms-excel"
-    )
+        all_users=pd.read_sql_query(
+            "SELECT * FROM users",conn)
 
-    st.subheader("Feedback Data")
-    st.dataframe(feedback_df)
+        st.dataframe(all_users)
 
-    if not feedback_df.empty:
-        st.subheader("📊 Feedback Analytics")
+        sel=st.text_input("Username to Modify")
+        add=st.checkbox("Can Add Guest")
+        view=st.checkbox("Can View All Data")
+        download=st.checkbox("Can Download")
 
-        col1,col2,col3,col4 = st.columns(4)
-        col1.metric("Overall Avg", round(feedback_df["overall"].mean(),2))
-        col2.metric("Staff Avg", round(feedback_df["staff"].mean(),2))
-        col3.metric("Food Avg", round(feedback_df["food"].mean(),2))
-        col4.metric("Service Avg", round(feedback_df["service"].mean(),2))
+        if st.button("Update Access"):
+            c.execute("""UPDATE users SET
+                      can_add_guest=?,
+                      can_view_all=?,
+                      can_download=?
+                      WHERE username=?""",
+                      (int(add),int(view),
+                       int(download),sel))
+            conn.commit()
+            st.success("Access Updated")
